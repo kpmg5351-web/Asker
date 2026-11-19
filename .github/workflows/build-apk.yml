@@ -1,4 +1,4 @@
-name: Build Hesabaty APK & Store Bundle
+name: Build Hesabaty APK
 
 on:
   push:
@@ -19,14 +19,16 @@ jobs:
           distribution: temurin
           java-version: '21'
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-
       - name: Accept Android SDK licenses
         run: |
-          SDK_DIR="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
-          if [ -n "$SDK_DIR" ] && [ -x "$SDK_DIR/cmdline-tools/latest/bin/sdkmanager" ]; then
-            yes | "$SDK_DIR/cmdline-tools/latest/bin/sdkmanager" --sdk_root="$SDK_DIR" --licenses > /dev/null 2>&1 || true
+          SDK_DIR="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          echo "Using Android SDK at: $SDK_DIR"
+          mkdir -p "$SDK_DIR/licenses"
+          printf "\n24333f8a63b6825ea9c5514f83c2829b004d1fee\n8933bad161af4178b1185d1a37fbf41ea5269c55\nd56f5187479451eabf01fb78af6dfcb131a6481e\n" > "$SDK_DIR/licenses/android-sdk-license"
+          printf "\n84831b9409646a918e30573bab4c9c91346d8abd\n" > "$SDK_DIR/licenses/android-sdk-preview-license"
+          SDKMANAGER="$(command -v sdkmanager || find "$SDK_DIR/cmdline-tools" -name sdkmanager -type f 2>/dev/null | head -n1 || true)"
+          if [ -n "$SDKMANAGER" ]; then
+            yes | "$SDKMANAGER" --sdk_root="$SDK_DIR" --licenses >/dev/null 2>&1 || true
           fi
 
       - name: Set up Gradle 9.3.1
@@ -34,46 +36,22 @@ jobs:
         with:
           gradle-version: '9.3.1'
 
-      - name: Prepare debug keystore from repository
+      - name: Prepare debug keystore and env
         run: |
           if [ -f debug.keystore.base64 ] && [ ! -f debug.keystore ]; then
-            base64 -d debug.keystore.base64 > debug.keystore
+            tr -d '\r\n' < debug.keystore.base64 | base64 -d > debug.keystore
           fi
           if [ ! -f .env ] && [ -f .env.example ]; then
             cp .env.example .env
           fi
+          ls -la debug.keystore
 
-      - name: Build Hesabaty Debug APK (Installable Update)
-        run: gradle :app:assembleDebug --no-daemon
+      - name: Build Hesabaty Debug APK
+        run: gradle :app:assembleDebug --no-daemon --stacktrace
 
       - name: Upload Hesabaty APK
         uses: actions/upload-artifact@v4
         with:
           name: Hesabaty-APK
           path: app/build/outputs/apk/debug/app-debug.apk
-          if-no-files-found: error
-
-      - name: Build Signed Play Store AAB (when signing secrets exist)
-        id: release_aab
-        env:
-          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
-          STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
-          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
-        run: |
-          if [ -n "$KEYSTORE_BASE64" ] && [ -n "$STORE_PASSWORD" ] && [ -n "$KEY_PASSWORD" ]; then
-            echo "$KEYSTORE_BASE64" | base64 -d > my-upload-key.jks
-            export KEYSTORE_PATH="$PWD/my-upload-key.jks"
-            gradle :app:bundleRelease --no-daemon
-            echo "built=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "built=false" >> "$GITHUB_OUTPUT"
-            echo "Skipping Play Store AAB: add KEYSTORE_BASE64, STORE_PASSWORD, KEY_PASSWORD secrets to enable."
-          fi
-
-      - name: Upload Play Store AAB
-        if: steps.release_aab.outputs.built == 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: Hesabaty-PlayStore-AAB
-          path: app/build/outputs/bundle/release/app-release.aab
           if-no-files-found: error
