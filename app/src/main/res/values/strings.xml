@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">حساباتي</string>
+    <string name="app_full_title">حساباتي | HESABATY</string>
+    <string name="company_name">تأسيس لصناعة البرمجيات</string>
+    <string name="company_tagline">نحوّل أفكار الأعمال إلى أنظمة متكاملة.</string>
+    <string name="support_phone">01099762204</string>
+    <string name="currency_egp">جنيه</string>
+    <string name="currency_short">ج.م</string>
+    <string name="currency_piaster">قرش</string>
+</resources>

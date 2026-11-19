@@ -1,0 +1,665 @@
+package com.example
+
+import android.content.Context
+import androidx.test.core.app.ApplicationProvider
+import com.example.core.DeviceLicenseManager
+import com.example.core.EgyptTime
+import com.example.core.MoneyFormatter
+import com.example.core.PdfInvoiceGenerator
+import com.example.core.PhoneUtils
+import com.example.core.WhatsAppHelper
+import com.example.data.backup.BackupManager
+import com.example.data.backup.BackupOpResult
+import com.example.data.local.AppSettingEntity
+import com.example.data.local.DailyInvoiceStatuses
+import com.example.data.local.HesabatyDatabase
+import com.example.data.local.InvoiceStatuses
+import com.example.data.local.PaymentMethods
+import com.example.data.local.SaleTypes
+import com.example.data.local.SupplierTxTypes
+import com.example.data.local.UserEntity
+import com.example.data.repository.AccountingRepository
+import com.example.data.repository.AuthRepository
+import com.example.data.repository.AuthResult
+import com.example.data.repository.InstallmentDraft
+import com.example.data.repository.RepoResult
+import com.example.data.repository.SaleLineDraft
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.test.runTest
+import org.junit.After
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertTrue
+import org.junit.Before
+import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
+
+/**
+ * Comprehensive Robolectric verification suite covering all 18 mandatory business,
+ * accounting, security, backup/restore, multi-tenant isolation, and UI/theme scenarios.
+ */
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [36])
+class HesabatyAccountingRobolectricTest {
+
+    private lateinit var context: Context
+    private lateinit var db: HesabatyDatabase
+    private lateinit var authRepo: AuthRepository
+    private lateinit var accRepo: AccountingRepository
+    private lateinit var backupManager: BackupManager
+
+    private lateinit var adminUser: UserEntity
+    private lateinit var tenantAId: String
+    private lateinit var ownerA: UserEntity
+
+    @Before
+    fun setUp() = runTest {
+        context = ApplicationProvider.getApplicationContext()
+        db = HesabatyDatabase.createInMemory(context)
+        authRepo = AuthRepository(db, DeviceLicenseManager(context))
+        accRepo = AccountingRepository(db)
+        backupManager = BackupManager(context, db)
+
+        // Verify secure bootstrap Master Admin login (PBKDF2-HMAC-SHA256 verification)
+        val loginRes = authRepo.login("asker1907", "422004")
+        assertTrue("Master Admin login should succeed", loginRes is AuthResult.Success)
+        adminUser = (loginRes as AuthResult.Success).data.user
+
+        // Create Shop Tenant A via Master Admin with all 7 required fields
+        val shopRes = authRepo.createShopAccount(
+            actor = adminUser,
+            shopName = "معرض النور للتجارة",
+            ownerName = "أحمد محمود",
+            address = "القاهرة - مدينة نصر",
+            phone = "01012345678",
+            username = "noor_shop",
+            password = "pass1234",
+            confirmPassword = "pass1234"
+        )
+        assertTrue("Shop creation should succeed", shopRes is AuthResult.Success)
+        val (tenantA, userA) = (shopRes as AuthResult.Success).data
+        tenantAId = tenantA.id
+        ownerA = userA
+    }
+
+    @After
+    fun tearDown() {
+        db.close()
+    }
+
+    // 1. إضافة مورد وتسجيل دفعة له والتأكد من الرصيد
+    @Test
+    fun test01_addSupplierAndRecordPaymentUpdatesBalance() = runTest {
+        val addRes = accRepo.addSupplier(
+            tenantId = tenantAId,
+            actor = ownerA,
+            name = "شركة الأمل للتوريدات",
+            phone = "01099887766",
+            whatsappPhone = "01099887766",
+            address = "العاشر من رمضان",
+            notes = "مورد جملة",
+            openingBalancePiasters = 500_000L // 5,000 EGP
+        )
+        assertTrue(addRes is RepoResult.Success)
+        val supplierId = (addRes as RepoResult.Success).data.id
+
+        // Add debt of 2,000 EGP -> balance 7,000 EGP
+        val debtRes = accRepo.recordSupplierTransaction(
+            tenantId = tenantAId,
+            actor = ownerA,
+            supplierId = supplierId,
+            type = SupplierTxTypes.DEBT_ADD,
+            amountPiasters = 200_000L,
+            paymentMethod = PaymentMethods.NONE,
+            notes = "بضاعة جديدة"
+        )
+        assertTrue(debtRes is RepoResult.Success)
+
+        // Record partial payment of 2,500 EGP -> balance 4,500 EGP
+        val payRes = accRepo.recordSupplierTransaction(
+            tenantId = tenantAId,
+            actor = ownerA,
+            supplierId = supplierId,
+            type = SupplierTxTypes.PAYMENT_PARTIAL,
+            amountPiasters = 250_000L,
+            paymentMethod = PaymentMethods.BANK_TRANSFER,
+            notes = "دفعة تحويل بنكي"
+        )
+        assertTrue(payRes is RepoResult.Success)
+
+        val updated = accRepo.observeSupplier(tenantAId, supplierId).first()!!
+        assertEquals(700_000L, updated.totalDuePiasters)
+        assertEquals(250_000L, updated.totalPaidPiasters)
+        assertEquals(450_000L, updated.currentBalancePiasters)
+    }
+
+    // 2 & 3. إضافة عميل وتسجيل عملية بيع + حساب السعر × العدد تلقائيًا (مع الكسور)
+    @Test
+    fun test02_03_addCustomerAndAutoCalculateSaleLineTotal() = runTest {
+        val custRes = accRepo.addCustomer(
+            tenantId = tenantAId,
+            actor = ownerA,
+            name = "محمد علي",
+            phone = "01122334455",
+            whatsappPhone = "01122334455",
+            address = "المعادي",
+            notes = "",
+            openingBalancePiasters = 0L
+        )
+        val customerId = (custRes as RepoResult.Success).data.id
+
+        // 200 EGP * 2 = 400 EGP, plus 150.50 EGP * 1.5 = 225.75 EGP => Total 625.75 EGP (62575 piasters)
+        val price1 = MoneyFormatter.parseEgpToPiasters("200")!!
+        val qty1 = MoneyFormatter.parseQuantityToMilli("2")!!
+        val line1 = SaleLineDraft("بضاعة متنوعة", price1, qty1)
+        assertEquals(40_000L, line1.lineTotalPiasters)
+
+        val price2 = MoneyFormatter.parseEgpToPiasters("150.50")!!
+        val qty2 = MoneyFormatter.parseQuantityToMilli("1.5")!!
+        val line2 = SaleLineDraft("", price2, qty2) // optional description
+        assertEquals(22_575L, line2.lineTotalPiasters)
+
+        val saleRes = accRepo.createSalesInvoice(
+            tenantId = tenantAId,
+            actor = ownerA,
+            customerId = customerId,
+            lines = listOf(line1, line2),
+            saleType = SaleTypes.CASH,
+            paymentMethod = PaymentMethods.CASH,
+            paidNowPiasters = 62_575L,
+            dueDateMillis = null,
+            installments = emptyList(),
+            notes = ""
+        )
+        assertTrue(saleRes is RepoResult.Success)
+        val invoice = (saleRes as RepoResult.Success).data
+        assertEquals(62_575L, invoice.totalPiasters)
+        assertEquals(0L, invoice.remainingPiasters)
+        assertEquals(InvoiceStatuses.PAID, invoice.status)
+    }
+
+    // 4 & 5. تسجيل بيع كاش نقدي وبيع كاش بمحفظة إلكترونية وتحديث Dashboard KPIs
+    @Test
+    fun test04_05_cashAndEWalletSalesUpdateDashboardKpis() = runTest {
+        val cid = (accRepo.addCustomer(tenantAId, ownerA, "عميل نقدي", "01000000001", "", "", "", 0L) as RepoResult.Success).data.id
+
+        // Cash sale: 500 EGP
+        accRepo.createSalesInvoice(
+            tenantId = tenantAId, actor = ownerA, customerId = cid,
+            lines = listOf(SaleLineDraft("بيع نقدي", 50_000L, 1000L)),
+            saleType = SaleTypes.CASH, paymentMethod = PaymentMethods.CASH,
+            paidNowPiasters = 50_000L, dueDateMillis = null, installments = emptyList(), notes = ""
+        )
+        // E-Wallet sale: 300 EGP
+        accRepo.createSalesInvoice(
+            tenantId = tenantAId, actor = ownerA, customerId = cid,
+            lines = listOf(SaleLineDraft("بيع محفظة", 30_000L, 1000L)),
+            saleType = SaleTypes.CASH, paymentMethod = PaymentMethods.EWALLET,
+            paidNowPiasters = 30_000L, dueDateMillis = null, installments = emptyList(), notes = ""
+        )
+
+        val dashboard = accRepo.observeDashboardSummary(tenantAId).first()
+        assertEquals(80_000L, dashboard.todaySalesPiasters)
+        assertEquals(50_000L, dashboard.todayCashCollectionsPiasters)
+        assertEquals(30_000L, dashboard.todayEWalletCollectionsPiasters)
+        assertEquals(80_000L, dashboard.todayNetCashflowPiasters)
+        assertEquals(0L, dashboard.totalCustomerReceivablesPiasters)
+    }
+
+    // 6. تسجيل بيع آجل مع مقدم وحساب المتبقي
+    @Test
+    fun test06_creditSaleCalculatesRemainingAndCustomerDebt() = runTest {
+        val cid = (accRepo.addCustomer(tenantAId, ownerA, "عميل آجل", "01000000002", "", "", "", 0L) as RepoResult.Success).data.id
+        val due = EgyptTime.addDays(EgyptTime.nowMillis(), 15)
+
+        val res = accRepo.createSalesInvoice(
+            tenantId = tenantAId, actor = ownerA, customerId = cid,
+            lines = listOf(SaleLineDraft("بضاعة آجل", 100_000L, 1000L)), // 1,000 EGP
+            saleType = SaleTypes.CREDIT, paymentMethod = PaymentMethods.CASH,
+            paidNowPiasters = 25_000L, // 250 EGP down payment
+            dueDateMillis = due, installments = emptyList(), notes = ""
+        )
+        assertTrue(res is RepoResult.Success)
+        val inv = (res as RepoResult.Success).data
+        assertEquals(75_000L, inv.remainingPiasters)
+        assertEquals(InvoiceStatuses.PARTIAL, inv.status)
+
+        val customer = accRepo.observeCustomer(tenantAId, cid).first()!!
+        assertEquals(75_000L, customer.currentBalancePiasters)
+    }
+
+    // 7 & 8. تقسيم فاتورة على عدة تواريخ + دفع دفعة جزئية وتحديث المتبقي + حماية تجاوز الرصيد
+    @Test
+    fun test07_08_scheduledSaleAndPartialPaymentWithOverpaymentGuard() = runTest {
+        val cid = (accRepo.addCustomer(tenantAId, ownerA, "عميل تقسيط", "01000000003", "", "", "", 0L) as RepoResult.Success).data.id
+        val now = EgyptTime.nowMillis()
+        val schedule = listOf(
+            InstallmentDraft(EgyptTime.addDays(now, 10), 300_000L), // 3,000
+            InstallmentDraft(EgyptTime.addDays(now, 20), 300_000L), // 3,000
+            InstallmentDraft(EgyptTime.addDays(now, 30), 400_000L)  // 4,000
+        )
+
+        val saleRes = accRepo.createSalesInvoice(
+            tenantId = tenantAId, actor = ownerA, customerId = cid,
+            lines = listOf(SaleLineDraft("بضاعة مجمعة", 1_000_000L, 1000L)), // 10,000 EGP
+            saleType = SaleTypes.SCHEDULED, paymentMethod = PaymentMethods.NONE,
+            paidNowPiasters = 0L, dueDateMillis = null, installments = schedule, notes = ""
+        )
+        assertTrue(saleRes is RepoResult.Success)
+        val invoice = (saleRes as RepoResult.Success).data
+
+        // Pay partial 3,500 EGP (pays installment #1 fully + 500 EGP of installment #2)
+        val payRes = accRepo.recordCustomerPayment(
+            tenantId = tenantAId, actor = ownerA, customerId = cid,
+            amountPiasters = 350_000L, paymentMethod = PaymentMethods.CASH,
+            invoiceId = invoice.id
+        )
+        assertTrue(payRes is RepoResult.Success)
+
+        val updatedInv = accRepo.observeInvoiceById(tenantAId, invoice.id).first()!!
+        assertEquals(650_000L, updatedInv.remainingPiasters)
+        val insts = accRepo.observeInvoiceInstallments(tenantAId, invoice.id).first()
+        assertEquals(3, insts.size)
+        assertEquals(0L, insts[0].remainingPiasters)
+        assertEquals(250_000L, insts[1].remainingPiasters)
+        assertEquals(400_000L, insts[2].remainingPiasters)
+
+        // Overpayment without explicit allowExcessAsCredit MUST be rejected
+        val overpayBlocked = accRepo.recordCustomerPayment(
+            tenantId = tenantAId, actor = ownerA, customerId = cid,
+            amountPiasters = 700_000L, paymentMethod = PaymentMethods.CASH,
+            invoiceId = invoice.id, allowExcessAsCredit = false
+        )
+        assertTrue("Overpayment should be blocked unless explicitly allowed", overpayBlocked is RepoResult.Error)
+    }
+
+    // 9, 10 & 11. فاتورة سحب يومي + عدة سحوبات بأوقات مختلفة + إغلاق ومنع التكرار
+    @Test
+    fun test09_10_11_dailyWithdrawalsTimelineAndSingleCloseGuard() = runTest {
+        val cid = (accRepo.addCustomer(tenantAId, ownerA, "عميل سحب يومي", "01000000004", "", "", "", 0L) as RepoResult.Success).data.id
+        val daily = (accRepo.createDailyWithdrawalInvoice(tenantAId, ownerA, cid) as RepoResult.Success).data
+        assertEquals(DailyInvoiceStatuses.OPEN, daily.status)
+
+        val t0 = EgyptTime.nowMillis()
+        // Example from spec: 200*2=400, 150*3=450, 100*1=100, 300*2=600 => Total 1,550 EGP (155,000 piasters)
+        accRepo.addDailyWithdrawalItem(tenantAId, ownerA, daily.id, "بضاعة", 20_000L, 2000L, "", t0)
+        accRepo.addDailyWithdrawalItem(tenantAId, ownerA, daily.id, "بضاعة", 15_000L, 3000L, "", t0 + 120_000L)
+        accRepo.addDailyWithdrawalItem(tenantAId, ownerA, daily.id, "بضاعة", 10_000L, 1000L, "", t0 + 240_000L)
+        accRepo.addDailyWithdrawalItem(tenantAId, ownerA, daily.id, "بضاعة", 30_000L, 2000L, "", t0 + 360_000L)
+
+        val items = accRepo.observeDailyItems(tenantAId, daily.id).first()
+        assertEquals(4, items.size)
+
+        // Close invoice once
+        val closeRes = accRepo.closeDailyWithdrawalInvoice(tenantAId, ownerA, daily.id)
+        assertTrue(closeRes is RepoResult.Success)
+        val closed = (closeRes as RepoResult.Success).data
+        assertEquals(155_000L, closed.totalPiasters)
+        assertEquals(DailyInvoiceStatuses.CLOSED, closed.status)
+
+        val customerAfterClose = accRepo.observeCustomer(tenantAId, cid).first()!!
+        assertEquals(155_000L, customerAfterClose.currentBalancePiasters)
+
+        // Second close MUST be blocked
+        val duplicateClose = accRepo.closeDailyWithdrawalInvoice(tenantAId, ownerA, daily.id)
+        assertTrue("Duplicate closing must be rejected", duplicateClose is RepoResult.Error)
+
+        // Reopen with reason, add 100 EGP more, re-close -> customer balance must be 1650 EGP (NOT 1550+1650!)
+        val reopenRes = accRepo.reopenDailyWithdrawalInvoice(tenantAId, ownerA, daily.id, "نسيان سحبة إضافية")
+        assertTrue(reopenRes is RepoResult.Success)
+        accRepo.addDailyWithdrawalItem(tenantAId, ownerA, daily.id, "إضافي", 10_000L, 1000L, "", t0 + 480_000L)
+        val recloseRes = accRepo.closeDailyWithdrawalInvoice(tenantAId, ownerA, daily.id)
+        assertTrue(recloseRes is RepoResult.Success)
+
+        val customerAfterReclose = accRepo.observeCustomer(tenantAId, cid).first()!!
+        assertEquals(165_000L, customerAfterReclose.currentBalancePiasters)
+    }
+
+    // 12. إرسال فاتورة عبر WhatsApp + تنسيق الرسالة والرقم وتوليد PDF
+    @Test
+    fun test12_whatsAppFormattingAndPdfGeneration() {
+        runCatching {
+            val cacheField = androidx.core.content.FileProvider::class.java.getDeclaredField("sCache")
+            cacheField.isAccessible = true
+            (cacheField.get(null) as? MutableMap<*, *>)?.clear()
+        }
+        val intl = PhoneUtils.toWhatsAppInternational("01099762204", "20")
+        assertEquals("201099762204", intl)
+
+        val msg = WhatsAppHelper.buildCustomerInvoiceMessage(
+            customerName = "محمود حسن",
+            shopName = "معرض النور",
+            invoiceNumber = "INV-00001",
+            dateFormatted = "2026/11/19",
+            totalPiasters = 155_000L,
+            paidPiasters = 55_000L,
+            remainingPiasters = 100_000L
+        )
+        assertTrue(msg.contains("محمود حسن"))
+        assertTrue(msg.contains("INV-00001"))
+        assertTrue(msg.contains("1,550"))
+        assertTrue(msg.contains("1,000"))
+
+        val (pdfFile, uri) = PdfInvoiceGenerator.generateInvoicePdf(
+            context,
+            PdfInvoiceGenerator.InvoicePrintModel(
+                shopName = "معرض النور",
+                shopAddress = "القاهرة",
+                shopPhone = "01012345678",
+                customerName = "محمود حسن",
+                invoiceNumber = "INV-00001",
+                dateFormatted = "2026/11/19",
+                invoiceTypeLabel = "بيع آجل",
+                paymentMethodLabel = "نقدي",
+                lines = listOf(PdfInvoiceGenerator.InvoiceLineRow("بضاعة", 20_000L, 2000L, 40_000L)),
+                totalPiasters = 40_000L,
+                paidPiasters = 10_000L,
+                remainingPiasters = 30_000L
+            )
+        )
+        assertTrue("Generated PDF file should exist and be non-empty", pdfFile.exists() && pdfFile.length() > 100L)
+        assertNotNull(uri)
+    }
+
+    // 13, 14 & 15. نسخ احتياطي مشفر + استعادة دون تكرار + العمل Offline-First
+    @Test
+    fun test13_14_15_encryptedBackupRestoreDeduplicatedAndOfflineFirst() = runTest {
+        val cid = (accRepo.addCustomer(tenantAId, ownerA, "عميل النسخ", "01000000005", "", "", "", 0L) as RepoResult.Success).data.id
+        accRepo.createSalesInvoice(
+            tenantId = tenantAId, actor = ownerA, customerId = cid,
+            lines = listOf(SaleLineDraft("بضاعة", 40_000L, 1000L)),
+            saleType = SaleTypes.CREDIT, paymentMethod = PaymentMethods.NONE,
+            paidNowPiasters = 0L, dueDateMillis = null, installments = emptyList(), notes = ""
+        )
+
+        // Create encrypted backup offline using passphrase
+        val backupRes = backupManager.createLocalBackup(
+            tenantId = tenantAId,
+            actorUserId = ownerA.id,
+            actorUsername = ownerA.username,
+            passphrase = "MyStrongSecret!2026"
+        )
+        assertTrue("Local encrypted backup must succeed offline", backupRes is BackupOpResult.Success)
+        val localFiles = backupManager.listLocalBackupFiles(tenantAId)
+        assertTrue(localFiles.isNotEmpty())
+        val encryptedBytes = localFiles.first().readBytes()
+
+        // Ensure ciphertext does not leak plaintext customer name
+        assertFalse(encryptedBytes.toString(Charsets.UTF_8).contains("عميل النسخ"))
+
+        // Restore twice into same DB and verify ZERO duplicate customers/invoices/transactions
+        val restore1 = backupManager.restoreFromEncryptedBytes(encryptedBytes, tenantAId, ownerA.id, ownerA.username, "MyStrongSecret!2026")
+        assertTrue(restore1 is BackupOpResult.Success)
+        val restore2 = backupManager.restoreFromEncryptedBytes(encryptedBytes, tenantAId, ownerA.id, ownerA.username, "MyStrongSecret!2026")
+        assertTrue(restore2 is BackupOpResult.Success)
+
+        val customersAfter = accRepo.observeCustomers(tenantAId).first()
+        val invoicesAfter = accRepo.observeInvoices(tenantAId).first()
+        val txsAfter = accRepo.observeCustomerTransactions(tenantAId, cid).first()
+        assertEquals(1, customersAfter.size)
+        assertEquals(1, invoicesAfter.size)
+        assertEquals(1, txsAfter.size)
+        assertEquals(40_000L, customersAfter.first().currentBalancePiasters)
+    }
+
+    // 16. اختبار عزل بيانات محلين مختلفين (Multi-Tenant Isolation)
+    @Test
+    fun test16_multiTenantIsolationBetweenTwoShops() = runTest {
+        val shopBRes = authRepo.createShopAccount(
+            actor = adminUser,
+            shopName = "محل البركة",
+            ownerName = "سعيد حسن",
+            address = "الإسكندرية",
+            phone = "01234567890",
+            username = "baraka_shop",
+            password = "pass5678",
+            confirmPassword = "pass5678"
+        )
+        assertTrue(shopBRes is AuthResult.Success)
+        val (tenantB, ownerB) = (shopBRes as AuthResult.Success).data
+
+        // Shop A adds customer A; Shop B adds customer B
+        accRepo.addCustomer(tenantAId, ownerA, "عميل محل أ", "01011111111", "", "", "", 10_000L)
+        accRepo.addCustomer(tenantB.id, ownerB, "عميل محل ب", "01222222222", "", "", "", 20_000L)
+
+        val listA = accRepo.observeCustomers(tenantAId).first()
+        val listB = accRepo.observeCustomers(tenantB.id).first()
+        assertEquals(1, listA.size)
+        assertEquals("عميل محل أ", listA.first().name)
+        assertEquals(1, listB.size)
+        assertEquals("عميل محل ب", listB.first().name)
+
+        // Shop Owner cannot perform Master Admin shop creation
+        val unauthorizedCreate = authRepo.createShopAccount(
+            actor = ownerA,
+            shopName = "محاولة غير مصرحة",
+            ownerName = "س",
+            address = "ع",
+            phone = "01012345678",
+            username = "hack_shop",
+            password = "1234",
+            confirmPassword = "1234"
+        )
+        assertTrue("Shop owner must be blocked from Master Admin operations", unauthorizedCreate is AuthResult.Error)
+
+        // Cross-tenant backup restore MUST be rejected
+        val (_, backupBytesA) = backupManager.buildEncryptedBackupBytes(tenantAId, "passA")
+        val crossRestore = backupManager.restoreFromEncryptedBytes(backupBytesA, tenantB.id, ownerB.id, ownerB.username, "passA")
+        assertTrue("Restoring Tenant A backup into Tenant B must be blocked", crossRestore is BackupOpResult.Error)
+    }
+
+    // 17. اختبار الوضع الفاتح والغامق (Light default & Dark toggle persisted)
+    @Test
+    fun test17_lightAndDarkModeSettingsPersistence() = runTest {
+        val initial = accRepo.observeAppSettings(tenantAId).first()
+        assertNotNull(initial)
+        assertFalse("Light mode must be the default", initial!!.darkMode)
+
+        accRepo.saveAppSettings(tenantAId, initial.copy(darkMode = true))
+        val dark = accRepo.observeAppSettings(tenantAId).first()!!
+        assertTrue("Dark mode toggle should persist", dark.darkMode)
+
+        accRepo.saveAppSettings(tenantAId, dark.copy(darkMode = false))
+        val backToLight = accRepo.observeAppSettings(tenantAId).first()!!
+        assertFalse("Switching back to light mode should persist", backToLight.darkMode)
+    }
+
+    // 18. اختبار عدم تكرار العمليات عند الضغط المتكرر (Idempotency)
+    @Test
+    fun test18_idempotencyPreventsDuplicateOperationsOnRapidTaps() = runTest {
+        val cid = (accRepo.addCustomer(tenantAId, ownerA, "عميل اختبار التكرار", "01000000009", "", "", "", 0L) as RepoResult.Success).data.id
+        val sameKey = "tap_once_key_123"
+
+        // Simulate rapid double-tap on Save Sale with same draft idempotency key
+        val r1 = accRepo.createSalesInvoice(
+            tenantId = tenantAId, actor = ownerA, customerId = cid,
+            lines = listOf(SaleLineDraft("بضاعة", 50_000L, 1000L)),
+            saleType = SaleTypes.CREDIT, paymentMethod = PaymentMethods.NONE,
+            paidNowPiasters = 0L, dueDateMillis = null, installments = emptyList(), notes = "",
+            idempotencyKey = sameKey
+        )
+        val r2 = accRepo.createSalesInvoice(
+            tenantId = tenantAId, actor = ownerA, customerId = cid,
+            lines = listOf(SaleLineDraft("بضاعة", 50_000L, 1000L)),
+            saleType = SaleTypes.CREDIT, paymentMethod = PaymentMethods.NONE,
+            paidNowPiasters = 0L, dueDateMillis = null, installments = emptyList(), notes = "",
+            idempotencyKey = sameKey
+        )
+        assertTrue(r1 is RepoResult.Success && r2 is RepoResult.Success)
+        assertEquals((r1 as RepoResult.Success).data.id, (r2 as RepoResult.Success).data.id)
+
+        val invoices = accRepo.observeCustomerInvoices(tenantAId, cid).first()
+        assertEquals(1, invoices.size)
+        val customer = accRepo.observeCustomer(tenantAId, cid).first()!!
+        assertEquals(50_000L, customer.currentBalancePiasters)
+
+        // Same for rapid double-tap on Customer Payment
+        val payKey = "pay_once_key_456"
+        accRepo.recordCustomerPayment(tenantAId, ownerA, cid, 20_000L, PaymentMethods.CASH, idempotencyKey = payKey)
+        accRepo.recordCustomerPayment(tenantAId, ownerA, cid, 20_000L, PaymentMethods.CASH, idempotencyKey = payKey)
+        val payments = accRepo.observeCustomerPayments(tenantAId, cid).first()
+        assertEquals(1, payments.size)
+        assertEquals(30_000L, accRepo.observeCustomer(tenantAId, cid).first()!!.currentBalancePiasters)
+    }
+
+    // 19. اختبار كتالوج الأصناف الاختياري + الخصم التلقائي من المخزون + تنبيه النفاد + النسخ الاحتياطي
+    @Test
+    fun test19_optionalProductsCatalogStockTrackingAlertsAndBackupRestore() = runTest {
+        val addRes = accRepo.addProduct(
+            tenantId = tenantAId,
+            actor = ownerA,
+            name = "كرتونة زيت عباد الشمس",
+            category = "مواد غذائية",
+            skuOrBarcode = "OIL-001",
+            unitLabel = "كرتونة",
+            salePricePiasters = 85_000L, // 850 EGP
+            purchasePricePiasters = 72_000L, // 720 EGP
+            stockQuantityMilli = 10_000L, // 10 cartons
+            trackStock = true,
+            minStockAlertMilli = 3_000L, // alert at <= 3 cartons
+            notes = "صنف سريع الحركة"
+        )
+        assertTrue(addRes is RepoResult.Success)
+        val prod = (addRes as RepoResult.Success).data
+        assertEquals(10_000L, prod.stockQuantityMilli)
+
+        val cid = (accRepo.addCustomer(tenantAId, ownerA, "عميل أصناف", "01011223344", "", "", "", 0L) as RepoResult.Success).data.id
+
+        // Sell 5 cartons using catalog product -> stock drops from 10 to 5
+        val saleRes = accRepo.createSalesInvoice(
+            tenantId = tenantAId,
+            actor = ownerA,
+            customerId = cid,
+            lines = listOf(SaleLineDraft(prod.name, prod.salePricePiasters, 5_000L, productId = prod.id)),
+            saleType = SaleTypes.CASH,
+            paymentMethod = PaymentMethods.CASH,
+            paidNowPiasters = 425_000L,
+            dueDateMillis = null,
+            installments = emptyList(),
+            notes = ""
+        )
+        assertTrue(saleRes is RepoResult.Success)
+        assertEquals(5_000L, db.productDao().getProductById(tenantAId, prod.id)!!.stockQuantityMilli)
+
+        // Daily withdrawal of 3 more cartons -> stock drops from 5 to 2 (<= 3 triggers low stock alert!)
+        val daily = (accRepo.createDailyWithdrawalInvoice(tenantAId, ownerA, cid) as RepoResult.Success).data
+        val dailyItemRes = accRepo.addDailyWithdrawalItem(
+            tenantId = tenantAId,
+            actor = ownerA,
+            dailyInvoiceId = daily.id,
+            description = prod.name,
+            unitPricePiasters = prod.salePricePiasters,
+            quantityMilli = 3_000L,
+            notes = "",
+            productId = prod.id
+        )
+        assertTrue(dailyItemRes is RepoResult.Success)
+        assertEquals(2_000L, db.productDao().getProductById(tenantAId, prod.id)!!.stockQuantityMilli)
+
+        // Low-stock alert must appear automatically
+        val alerts = accRepo.observeAlerts(tenantAId).first()
+        assertTrue("Low stock alert must trigger when stock <= minStockAlert", alerts.any { it.id == "lowstock_${prod.id}" })
+
+        // Manual stock restock +8 cartons -> stock becomes 10 again
+        val restockRes = accRepo.adjustProductStock(tenantAId, ownerA, prod.id, 8_000L, "توريد جديد")
+        assertTrue(restockRes is RepoResult.Success)
+        assertEquals(10_000L, db.productDao().getProductById(tenantAId, prod.id)!!.stockQuantityMilli)
+
+        // Encrypted backup & restore must preserve products
+        val (_, bytes) = backupManager.buildEncryptedBackupBytes(tenantAId, "pass123")
+        db.productDao().deleteProduct(tenantAId, prod.id)
+        assertEquals(0, db.productDao().getProducts(tenantAId).size)
+
+        val restoreRes = backupManager.restoreFromEncryptedBytes(bytes, tenantAId, ownerA.id, ownerA.username, "pass123")
+        assertTrue(restoreRes is BackupOpResult.Success)
+        val restoredProducts = db.productDao().getProducts(tenantAId)
+        assertEquals(1, restoredProducts.size)
+        assertEquals("كرتونة زيت عباد الشمس", restoredProducts.first().name)
+        assertEquals(10_000L, restoredProducts.first().stockQuantityMilli)
+    }
+
+    // 20. اختبار نظام تنبيهات تجاوز حد المديونية (حد خاص للعميل + حد عام للمحل + اختفاء التنبيه بعد التحصيل)
+    @Test
+    fun test20_creditLimitAlertsPerCustomerAndDefaultShopLimit() = runTest {
+        // Customer A with custom credit limit = 1,000 EGP (100_000 piasters)
+        val cidA = (accRepo.addCustomer(
+            tenantId = tenantAId,
+            actor = ownerA,
+            name = "عميل حد خاص",
+            phone = "01022334455",
+            whatsappPhone = "",
+            address = "",
+            notes = "",
+            openingBalancePiasters = 0L,
+            creditLimitPiasters = 100_000L
+        ) as RepoResult.Success).data.id
+
+        // Customer B with NO custom limit (0L)
+        val cidB = (accRepo.addCustomer(
+            tenantId = tenantAId,
+            actor = ownerA,
+            name = "عميل حد عام",
+            phone = "01066778899",
+            whatsappPhone = "",
+            address = "",
+            notes = "",
+            openingBalancePiasters = 70_000L, // 700 EGP debt
+            creditLimitPiasters = 0L
+        ) as RepoResult.Success).data.id
+
+        // Initially no breach
+        assertTrue(accRepo.observeCreditLimitBreaches(tenantAId).first().isEmpty())
+
+        // Credit sale of 1,500 EGP to Customer A -> exceeds 1,000 EGP limit by 500 EGP (50_000 piasters)
+        accRepo.createSalesInvoice(
+            tenantId = tenantAId,
+            actor = ownerA,
+            customerId = cidA,
+            lines = listOf(SaleLineDraft("بضاعة آجل", 150_000L, 1_000L)),
+            saleType = SaleTypes.CREDIT,
+            paymentMethod = PaymentMethods.CASH,
+            paidNowPiasters = 0L,
+            dueDateMillis = null,
+            installments = emptyList(),
+            notes = ""
+        )
+
+        val breachesAfterSale = accRepo.observeCreditLimitBreaches(tenantAId).first()
+        assertEquals(1, breachesAfterSale.size)
+        assertEquals(cidA, breachesAfterSale.first().customer.id)
+        assertEquals(100_000L, breachesAfterSale.first().effectiveLimitPiasters)
+        assertEquals(50_000L, breachesAfterSale.first().excessPiasters)
+        assertTrue(breachesAfterSale.first().isCustomLimit)
+
+        val alertsAfterSale = accRepo.observeAlerts(tenantAId).first()
+        assertTrue(
+            "Danger alert must be emitted for customer exceeding credit limit",
+            alertsAfterSale.any { it.id == "credit_limit_$cidA" && it.severity == com.example.data.repository.AlertSeverity.DANGER }
+        )
+
+        // Collect 600 EGP from Customer A -> balance becomes 900 EGP (below 1,000 EGP custom limit) -> breach clears
+        accRepo.recordCustomerPayment(tenantAId, ownerA, cidA, 60_000L, PaymentMethods.CASH)
+        assertTrue(accRepo.observeCreditLimitBreaches(tenantAId).first().isEmpty())
+
+        // Now set shop-wide default customer credit limit = 500 EGP (50_000 piasters)
+        val currentSettings = db.systemDao().getAppSettings(tenantAId)!!
+        db.systemDao().upsertAppSettings(currentSettings.copy(defaultCustomerCreditLimitPiasters = 50_000L))
+
+        // Customer A (900 EGP balance) has custom limit 1,000 EGP -> NOT breached
+        // Customer B (700 EGP balance) has 0 custom limit -> falls back to shop default 500 EGP -> BREACHED by 200 EGP!
+        val shopDefaultBreaches = accRepo.observeCreditLimitBreaches(tenantAId).first()
+        assertEquals(1, shopDefaultBreaches.size)
+        assertEquals(cidB, shopDefaultBreaches.first().customer.id)
+        assertEquals(50_000L, shopDefaultBreaches.first().effectiveLimitPiasters)
+        assertEquals(20_000L, shopDefaultBreaches.first().excessPiasters)
+        assertFalse(shopDefaultBreaches.first().isCustomLimit)
+
+        // Raising Customer B's custom limit to 1,000 EGP clears the breach
+        val updateRes = accRepo.updateCustomerCreditLimit(tenantAId, ownerA, cidB, 100_000L)
+        assertTrue(updateRes is RepoResult.Success)
+        assertTrue(accRepo.observeCreditLimitBreaches(tenantAId).first().isEmpty())
+    }
+}

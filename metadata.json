@@ -1,0 +1,6 @@
+{
+  "name": "حساباتي | HESABATY",
+  "description": "نظام محاسبي عربي متكامل لإدارة حسابات الموردين والعملاء والمبيعات وفواتير السحب اليومي — تأسيس لصناعة البرمجيات",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
