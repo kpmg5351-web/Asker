@@ -36,10 +36,28 @@ jobs:
         with:
           gradle-version: '9.3.1'
 
+      - name: Restore cached debug keystore (fallback)
+        uses: actions/cache@v4
+        with:
+          path: debug.keystore
+          key: hesabaty-debug-keystore-v1
+
       - name: Prepare debug keystore and env
         run: |
-          if [ -f debug.keystore.base64 ] && [ ! -f debug.keystore ]; then
-            tr -d '\r\n' < debug.keystore.base64 | base64 -d > debug.keystore
+          if [ -f debug.keystore.base64 ]; then
+            echo "Found debug.keystore.base64, decoding..."
+            python3 -c 'import base64; data = open("debug.keystore.base64", "r", encoding="utf-8").read().strip(); open("debug.keystore", "wb").write(base64.b64decode(data))'
+          elif [ ! -f debug.keystore ]; then
+            echo "Generating fallback debug.keystore..."
+            keytool -genkeypair -noprompt \
+              -keystore debug.keystore \
+              -storepass android \
+              -alias androiddebugkey \
+              -keypass android \
+              -keyalg RSA \
+              -keysize 2048 \
+              -validity 10000 \
+              -dname "CN=Android Debug,O=Android,C=US"
           fi
           if [ ! -f .env ] && [ -f .env.example ]; then
             cp .env.example .env
