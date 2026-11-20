@@ -5,6 +5,9 @@ on:
     branches: [ main, master ]
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -22,7 +25,6 @@ jobs:
       - name: Accept Android SDK licenses
         run: |
           SDK_DIR="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
-          echo "Using Android SDK at: $SDK_DIR"
           mkdir -p "$SDK_DIR/licenses"
           printf "\n24333f8a63b6825ea9c5514f83c2829b004d1fee\n8933bad161af4178b1185d1a37fbf41ea5269c55\nd56f5187479451eabf01fb78af6dfcb131a6481e\n" > "$SDK_DIR/licenses/android-sdk-license"
           printf "\n84831b9409646a918e30573bab4c9c91346d8abd\n" > "$SDK_DIR/licenses/android-sdk-preview-license"
@@ -45,10 +47,8 @@ jobs:
       - name: Prepare debug keystore and env
         run: |
           if [ -f debug.keystore.base64 ]; then
-            echo "Found debug.keystore.base64, decoding..."
             python3 -c 'import base64; data = open("debug.keystore.base64", "r", encoding="utf-8").read().strip(); open("debug.keystore", "wb").write(base64.b64decode(data))'
           elif [ ! -f debug.keystore ]; then
-            echo "Generating fallback debug.keystore..."
             keytool -genkeypair -noprompt \
               -keystore debug.keystore \
               -storepass android \
@@ -62,14 +62,25 @@ jobs:
           if [ ! -f .env ] && [ -f .env.example ]; then
             cp .env.example .env
           fi
-          ls -la debug.keystore
 
-      - name: Build Hesabaty Debug APK
-        run: gradle :app:assembleDebug --no-daemon --stacktrace
+      - name: Build Hesabaty APK
+        run: gradle :app:assembleDebug --no-daemon --no-configuration-cache
 
-      - name: Upload Hesabaty APK
+      - name: Prepare Hesabaty.apk
+        run: cp app/build/outputs/apk/debug/app-debug.apk Hesabaty.apk
+
+      - name: Upload Hesabaty APK Artifact
         uses: actions/upload-artifact@v4
         with:
           name: Hesabaty-APK
-          path: app/build/outputs/apk/debug/app-debug.apk
+          path: Hesabaty.apk
           if-no-files-found: error
+
+      - name: Publish Direct Download Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: Hesabaty Latest APK
+          body: "أحدث إصدار جاهز للتثبيت المباشر من تطبيق حساباتي | HESABATY (ملف Hesabaty.apk)."
+          files: Hesabaty.apk
+          make_latest: true
