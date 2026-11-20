@@ -1,10 +1,30 @@
 package com.example.ui.screens
 
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandHorizontally
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.shrinkHorizontally
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -30,6 +50,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Login
 import androidx.compose.material.icons.filled.Call
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.Fingerprint
@@ -39,6 +60,7 @@ import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PlayCircleOutline
 import androidx.compose.material.icons.filled.Security
+import androidx.compose.material.icons.filled.VerifiedUser
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.filled.Warning
@@ -57,8 +79,10 @@ import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -68,10 +92,9 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.material.icons.filled.VerifiedUser
-import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
@@ -91,15 +114,19 @@ import com.example.data.repository.AuthRepository
 import com.example.ui.theme.HesabatyThemeExtras
 import com.example.ui.theme.PrimaryBlue as HesabatyBlue
 import com.example.ui.theme.PrimaryDarkBlue as HesabatyBlueDark
+import com.example.ui.viewmodel.SavedLoginCredentials
 
 @Composable
 fun LoginScreen(
     isBusy: Boolean,
     isDarkMode: Boolean,
+    savedCredentials: SavedLoginCredentials = SavedLoginCredentials(),
     deviceLabel: String = "",
     deviceActivationCode: String = "",
     onToggleDarkMode: (Boolean) -> Unit,
     onLogin: (username: String, password: String, rememberMe: Boolean, onError: (String) -> Unit) -> Unit,
+    onRememberMeChanged: (Boolean) -> Unit = {},
+    onRequestBiometricLogin: (onError: (String) -> Unit) -> Unit = {},
     onOpenTrial: (onError: (String) -> Unit) -> Unit,
     onCreateOnThisPhone: (
         adminUsername: String,
@@ -116,12 +143,34 @@ fun LoginScreen(
     onActivateWithToken: (rawToken: String, onError: (String) -> Unit) -> Unit = { _, _ -> }
 ) {
     val context = LocalContext.current
-    var username by rememberSaveable { mutableStateOf("") }
-    var password by rememberSaveable { mutableStateOf("") }
-    var rememberMe by rememberSaveable { mutableStateOf(false) }
+    var username by rememberSaveable { mutableStateOf(savedCredentials.username) }
+    var password by rememberSaveable { mutableStateOf(savedCredentials.password) }
+    var rememberMe by rememberSaveable { mutableStateOf(savedCredentials.rememberMe) }
+    var didPrefill by rememberSaveable { mutableStateOf(savedCredentials.rememberMe && savedCredentials.username.isNotBlank()) }
     var showPassword by rememberSaveable { mutableStateOf(false) }
     var errorText by rememberSaveable { mutableStateOf<String?>(null) }
     var showActivationDialog by remember { mutableStateOf(false) }
+    val loginInteractionSource = remember { MutableInteractionSource() }
+    val isLoginPressed by loginInteractionSource.collectIsPressedAsState()
+    val loginButtonScale by animateFloatAsState(
+        targetValue = if (isLoginPressed && !isBusy) 0.97f else 1f,
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioMediumBouncy,
+            stiffness = Spring.StiffnessMedium
+        ),
+        label = "login_button_scale"
+    )
+
+    LaunchedEffect(savedCredentials) {
+        if (!didPrefill && savedCredentials.rememberMe && savedCredentials.username.isNotBlank()) {
+            if (username.isBlank() && password.isBlank()) {
+                username = savedCredentials.username
+                password = savedCredentials.password
+                rememberMe = true
+            }
+            didPrefill = true
+        }
+    }
 
     val cardBg = if (isDarkMode) Color(0xFF131E34) else Color.White
     val cardBorder = if (isDarkMode) Color(0xFF233554) else Color(0xFFE3ECF8)
@@ -146,7 +195,7 @@ fun LoginScreen(
         // Decorative blue top & bottom waves matching the HESABATY visual identity
         HesabatyWaveBackground(isDarkMode = isDarkMode, modifier = Modifier.fillMaxSize())
 
-        // Subtle dark/light mode toggle button
+        // Scrollable form first, floating theme toggle above it so taps are never blocked
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -154,34 +203,11 @@ fun LoginScreen(
                 .navigationBarsPadding()
                 .imePadding()
         ) {
-            Surface(
-                shape = CircleShape,
-                color = if (isDarkMode) Color(0xCC16243D) else Color(0xCCFFFFFF),
-                border = BorderStroke(1.dp, cardBorder),
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .padding(horizontal = 16.dp, vertical = 10.dp)
-            ) {
-                IconButton(
-                    onClick = { onToggleDarkMode(!isDarkMode) },
-                    modifier = Modifier
-                        .size(44.dp)
-                        .testTag("login_theme_toggle")
-                ) {
-                    Icon(
-                        imageVector = if (isDarkMode) Icons.Default.LightMode else Icons.Default.DarkMode,
-                        contentDescription = if (isDarkMode) "الوضع الفاتح" else "الوضع الغامق",
-                        tint = if (isDarkMode) Color(0xFF93C5FD) else HesabatyBlueDark,
-                        modifier = Modifier.size(20.dp)
-                    )
-                }
-            }
-
             Column(
                 modifier = Modifier
                     .fillMaxSize()
                     .verticalScroll(rememberScrollState())
-                    .padding(horizontal = 20.dp, vertical = 18.dp),
+                    .padding(start = 20.dp, end = 20.dp, top = 56.dp, bottom = 18.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Center
             ) {
@@ -390,114 +416,271 @@ fun LoginScreen(
 
                             Spacer(modifier = Modifier.height(6.dp))
 
-                            // "Remember me on this device" Checkbox
+                            // "Remember me on this device" Checkbox with animated visual confirmation
+                            val rememberRowBg by animateColorAsState(
+                                targetValue = when {
+                                    rememberMe && isDarkMode -> Color(0xFF1A315A).copy(alpha = 0.72f)
+                                    rememberMe -> Color(0xFFEAF3FF)
+                                    else -> Color.Transparent
+                                },
+                                animationSpec = tween(durationMillis = 220),
+                                label = "remember_row_bg"
+                            )
+                            val rememberRowBorder by animateColorAsState(
+                                targetValue = when {
+                                    rememberMe && isDarkMode -> Color(0xFF3A64A8)
+                                    rememberMe -> Color(0xFFBBD6FB)
+                                    else -> Color.Transparent
+                                },
+                                animationSpec = tween(durationMillis = 220),
+                                label = "remember_row_border"
+                            )
+                            val checkboxScale by animateFloatAsState(
+                                targetValue = if (rememberMe) 1.08f else 1f,
+                                animationSpec = spring(
+                                    dampingRatio = Spring.DampingRatioMediumBouncy,
+                                    stiffness = Spring.StiffnessMedium
+                                ),
+                                label = "remember_checkbox_scale"
+                            )
+
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .clip(RoundedCornerShape(10.dp))
-                                    .clickable { rememberMe = !rememberMe }
-                                    .padding(vertical = 2.dp),
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(rememberRowBg)
+                                    .border(1.dp, rememberRowBorder, RoundedCornerShape(12.dp))
+                                    .clickable {
+                                        val next = !rememberMe
+                                        rememberMe = next
+                                        onRememberMeChanged(next)
+                                    }
+                                    .padding(horizontal = 4.dp, vertical = 2.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Checkbox(
                                     checked = rememberMe,
-                                    onCheckedChange = { rememberMe = it },
+                                    onCheckedChange = { next ->
+                                        rememberMe = next
+                                        onRememberMeChanged(next)
+                                    },
                                     colors = CheckboxDefaults.colors(checkedColor = HesabatyBlue),
-                                    modifier = Modifier.testTag("login_remember_checkbox")
+                                    modifier = Modifier
+                                        .graphicsLayer {
+                                            scaleX = checkboxScale
+                                            scaleY = checkboxScale
+                                        }
+                                        .testTag("login_remember_checkbox")
                                 )
                                 Text(
                                     text = "تذكرني على هذا الجهاز",
                                     style = MaterialTheme.typography.bodyMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    fontWeight = if (rememberMe) FontWeight.SemiBold else FontWeight.Normal,
+                                    color = if (rememberMe) {
+                                        if (isDarkMode) Color(0xFFBFDBFE) else HesabatyBlueDark
+                                    } else {
+                                        MaterialTheme.colorScheme.onSurfaceVariant
+                                    },
+                                    modifier = Modifier.weight(1f)
                                 )
+                                AnimatedVisibility(
+                                    visible = rememberMe,
+                                    enter = fadeIn(tween(180)) + expandHorizontally(
+                                        animationSpec = spring(
+                                            dampingRatio = Spring.DampingRatioLowBouncy,
+                                            stiffness = Spring.StiffnessMediumLow
+                                        )
+                                    ),
+                                    exit = fadeOut(tween(150)) + shrinkHorizontally(tween(160))
+                                ) {
+                                    Surface(
+                                        shape = RoundedCornerShape(50),
+                                        color = if (isDarkMode) Color(0xFF214075) else Color(0xFFD6E7FF),
+                                        modifier = Modifier.padding(end = 8.dp)
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.CheckCircle,
+                                                contentDescription = null,
+                                                tint = HesabatyBlue,
+                                                modifier = Modifier.size(13.dp)
+                                            )
+                                            Spacer(modifier = Modifier.width(4.dp))
+                                            Text(
+                                                text = "محفوظ",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                fontWeight = FontWeight.Bold,
+                                                color = if (isDarkMode) Color(0xFFDBEAFE) else HesabatyBlueDark
+                                            )
+                                        }
+                                    }
+                                }
                             }
 
-                            // Inline Error Banner (including Device Binding mismatch message)
-                            if (errorText != null) {
-                                Spacer(modifier = Modifier.height(8.dp))
-                                Surface(
-                                    color = HesabatyThemeExtras.colors.dangerContainer,
-                                    shape = RoundedCornerShape(12.dp),
-                                    modifier = Modifier.fillMaxWidth()
-                                ) {
-                                    Row(
-                                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
-                                        verticalAlignment = Alignment.CenterVertically
+                            // Animated Inline Error Banner (including Device Binding mismatch message)
+                            AnimatedVisibility(
+                                visible = errorText != null,
+                                enter = expandVertically(
+                                    animationSpec = spring(
+                                        dampingRatio = Spring.DampingRatioLowBouncy,
+                                        stiffness = Spring.StiffnessMediumLow
+                                    )
+                                ) + fadeIn(tween(180)),
+                                exit = shrinkVertically(tween(180)) + fadeOut(tween(150))
+                            ) {
+                                val displayedError = errorText.orEmpty()
+                                Column {
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    Surface(
+                                        color = HesabatyThemeExtras.colors.dangerContainer,
+                                        shape = RoundedCornerShape(12.dp),
+                                        modifier = Modifier.fillMaxWidth()
                                     ) {
-                                        Icon(
-                                            imageVector = Icons.Default.Warning,
-                                            contentDescription = null,
-                                            tint = HesabatyThemeExtras.colors.danger,
-                                            modifier = Modifier.size(18.dp)
-                                        )
-                                        Spacer(modifier = Modifier.width(8.dp))
-                                        Text(
-                                            text = errorText!!,
-                                            color = HesabatyThemeExtras.colors.danger,
-                                            style = MaterialTheme.typography.bodySmall,
-                                            fontWeight = FontWeight.SemiBold,
-                                            modifier = Modifier.testTag("login_error_text")
-                                        )
+                                        Row(
+                                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.Warning,
+                                                contentDescription = null,
+                                                tint = HesabatyThemeExtras.colors.danger,
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                            Spacer(modifier = Modifier.width(8.dp))
+                                            Text(
+                                                text = displayedError,
+                                                color = HesabatyThemeExtras.colors.danger,
+                                                style = MaterialTheme.typography.bodySmall,
+                                                fontWeight = FontWeight.SemiBold,
+                                                modifier = Modifier.testTag("login_error_text")
+                                            )
+                                        }
                                     }
                                 }
                             }
 
                             Spacer(modifier = Modifier.height(14.dp))
 
-                            // Primary Royal-Blue Gradient Login Button
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(54.dp)
-                                    .shadow(
-                                        elevation = 6.dp,
-                                        shape = RoundedCornerShape(16.dp),
-                                        ambientColor = HesabatyBlue,
-                                        spotColor = HesabatyBlue
-                                    )
-                                    .clip(RoundedCornerShape(16.dp))
-                                    .background(
-                                        Brush.horizontalGradient(
-                                            colors = listOf(HesabatyBlueDark, HesabatyBlue, Color(0xFF2684FF))
-                                        )
-                                    )
-                                    .clickable(enabled = !isBusy) {
-                                        onLogin(username, password, rememberMe) { errorText = it }
-                                    }
-                                    .testTag("login_submit_button"),
-                                contentAlignment = Alignment.Center
+                            // Primary Royal-Blue Gradient Login Button + Biometric Quick Login
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
-                                if (isBusy) {
-                                    CircularProgressIndicator(
-                                        modifier = Modifier.size(22.dp),
-                                        color = Color.White,
-                                        strokeWidth = 2.5.dp
-                                    )
-                                } else {
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.Center
-                                    ) {
-                                        Box(
-                                            modifier = Modifier
-                                                .size(32.dp)
-                                                .clip(RoundedCornerShape(9.dp))
-                                                .background(Color.White.copy(alpha = 0.2f)),
-                                            contentAlignment = Alignment.Center
-                                        ) {
-                                            Icon(
-                                                imageVector = Icons.AutoMirrored.Filled.Login,
-                                                contentDescription = null,
-                                                tint = Color.White,
-                                                modifier = Modifier.size(18.dp)
-                                            )
+                                Box(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .height(54.dp)
+                                        .graphicsLayer {
+                                            scaleX = loginButtonScale
+                                            scaleY = loginButtonScale
                                         }
-                                        Spacer(modifier = Modifier.width(10.dp))
-                                        Text(
-                                            text = "دخول إلى النظام",
-                                            style = MaterialTheme.typography.titleMedium,
-                                            fontWeight = FontWeight.Bold,
-                                            color = Color.White
+                                        .shadow(
+                                            elevation = 6.dp,
+                                            shape = RoundedCornerShape(16.dp),
+                                            ambientColor = HesabatyBlue,
+                                            spotColor = HesabatyBlue
+                                        )
+                                        .clip(RoundedCornerShape(16.dp))
+                                        .background(
+                                            Brush.horizontalGradient(
+                                                colors = listOf(HesabatyBlueDark, HesabatyBlue, Color(0xFF2684FF))
+                                            )
+                                        )
+                                        .clickable(
+                                            interactionSource = loginInteractionSource,
+                                            indication = LocalIndication.current,
+                                            enabled = !isBusy
+                                        ) {
+                                            onLogin(username, password, rememberMe) { errorText = it }
+                                        }
+                                        .testTag("login_submit_button"),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    AnimatedContent(
+                                        targetState = isBusy,
+                                        transitionSpec = {
+                                            (fadeIn(tween(180)) + scaleIn(initialScale = 0.92f, animationSpec = tween(200))) togetherWith
+                                                (fadeOut(tween(150)) + scaleOut(targetScale = 0.92f, animationSpec = tween(150)))
+                                        },
+                                        label = "login_button_content"
+                                    ) { busy ->
+                                        if (busy) {
+                                            Row(
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.Center
+                                            ) {
+                                                CircularProgressIndicator(
+                                                    modifier = Modifier.size(20.dp),
+                                                    color = Color.White,
+                                                    strokeWidth = 2.5.dp
+                                                )
+                                                Spacer(modifier = Modifier.width(10.dp))
+                                                Text(
+                                                    text = "جارٍ الدخول...",
+                                                    style = MaterialTheme.typography.titleMedium,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = Color.White
+                                                )
+                                            }
+                                        } else {
+                                            Row(
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.Center
+                                            ) {
+                                                Box(
+                                                    modifier = Modifier
+                                                        .size(32.dp)
+                                                        .clip(RoundedCornerShape(9.dp))
+                                                        .background(Color.White.copy(alpha = 0.2f)),
+                                                    contentAlignment = Alignment.Center
+                                                ) {
+                                                    Icon(
+                                                        imageVector = Icons.AutoMirrored.Filled.Login,
+                                                        contentDescription = null,
+                                                        tint = Color.White,
+                                                        modifier = Modifier.size(18.dp)
+                                                    )
+                                                }
+                                                Spacer(modifier = Modifier.width(10.dp))
+                                                Text(
+                                                    text = "دخول إلى النظام",
+                                                    style = MaterialTheme.typography.titleMedium,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = Color.White
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+
+                                Surface(
+                                    onClick = {
+                                        if (!isBusy) {
+                                            errorText = null
+                                            onRequestBiometricLogin { errorText = it }
+                                        }
+                                    },
+                                    enabled = !isBusy,
+                                    shape = RoundedCornerShape(16.dp),
+                                    color = if (isDarkMode) Color(0xFF1A2D4F) else Color(0xFFEBF3FF),
+                                    border = BorderStroke(
+                                        1.4.dp,
+                                        if (savedCredentials.biometricUsername != null) HesabatyBlue else inputBorder
+                                    ),
+                                    modifier = Modifier
+                                        .size(54.dp)
+                                        .testTag("login_biometric_button")
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Icon(
+                                            imageVector = Icons.Default.Fingerprint,
+                                            contentDescription = "الدخول بالبصمة",
+                                            tint = if (isDarkMode) Color(0xFF93C5FD) else HesabatyBlueDark,
+                                            modifier = Modifier.size(28.dp)
                                         )
                                     }
                                 }
@@ -685,6 +868,41 @@ fun LoginScreen(
                     }
 
                     Spacer(modifier = Modifier.height(22.dp))
+                }
+            }
+
+            // Floating Light/Dark Theme Toggle rendered above scrollable form
+            Surface(
+                onClick = { onToggleDarkMode(!isDarkMode) },
+                shape = CircleShape,
+                color = if (isDarkMode) Color(0xFF1A2942) else Color(0xE6FFFFFF),
+                border = BorderStroke(
+                    1.dp,
+                    if (isDarkMode) Color(0xFF314970) else Color(0xFFCBD9F0)
+                ),
+                shadowElevation = 4.dp,
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(horizontal = 16.dp, vertical = 10.dp)
+                    .size(48.dp)
+                    .testTag("login_theme_toggle")
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    AnimatedContent(
+                        targetState = isDarkMode,
+                        transitionSpec = {
+                            (fadeIn(tween(200)) + scaleIn(initialScale = 0.8f, animationSpec = tween(220))) togetherWith
+                                (fadeOut(tween(150)) + scaleOut(targetScale = 0.8f, animationSpec = tween(150)))
+                        },
+                        label = "login_theme_icon"
+                    ) { dark ->
+                        Icon(
+                            imageVector = if (dark) Icons.Default.LightMode else Icons.Default.DarkMode,
+                            contentDescription = if (dark) "تفعيل الوضع الفاتح" else "تفعيل الوضع الغامق",
+                            tint = if (dark) Color(0xFFFBBF24) else HesabatyBlueDark,
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
                 }
             }
         }

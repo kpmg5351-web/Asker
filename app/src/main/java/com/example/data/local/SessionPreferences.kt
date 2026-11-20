@@ -18,7 +18,12 @@ data class StoredSession(
     val role: String? = null,
     val username: String? = null,
     val rememberMe: Boolean = true,
-    val darkMode: Boolean = false
+    val darkMode: Boolean = false,
+    val savedLoginUsername: String? = null,
+    val savedLoginPasswordEnc: String? = null,
+    val savedRememberChecked: Boolean = false,
+    val biometricUserId: String? = null,
+    val biometricUsername: String? = null
 )
 
 class SessionPreferences(private val context: Context) {
@@ -30,6 +35,11 @@ class SessionPreferences(private val context: Context) {
         val USERNAME = stringPreferencesKey("session_username")
         val REMEMBER_ME = booleanPreferencesKey("session_remember_me")
         val DARK_MODE = booleanPreferencesKey("global_dark_mode")
+        val SAVED_LOGIN_USERNAME = stringPreferencesKey("saved_login_username")
+        val SAVED_LOGIN_PASSWORD_ENC = stringPreferencesKey("saved_login_password_enc")
+        val SAVED_REMEMBER_CHECKED = booleanPreferencesKey("saved_remember_checked")
+        val BIOMETRIC_USER_ID = stringPreferencesKey("biometric_user_id")
+        val BIOMETRIC_USERNAME = stringPreferencesKey("biometric_username")
     }
 
     val sessionFlow: Flow<StoredSession> = context.hesabatyDataStore.data.map { prefs ->
@@ -39,7 +49,12 @@ class SessionPreferences(private val context: Context) {
             role = prefs[Keys.ROLE],
             username = prefs[Keys.USERNAME],
             rememberMe = prefs[Keys.REMEMBER_ME] ?: true,
-            darkMode = prefs[Keys.DARK_MODE] ?: false
+            darkMode = prefs[Keys.DARK_MODE] ?: false,
+            savedLoginUsername = prefs[Keys.SAVED_LOGIN_USERNAME],
+            savedLoginPasswordEnc = prefs[Keys.SAVED_LOGIN_PASSWORD_ENC],
+            savedRememberChecked = prefs[Keys.SAVED_REMEMBER_CHECKED] ?: false,
+            biometricUserId = prefs[Keys.BIOMETRIC_USER_ID],
+            biometricUsername = prefs[Keys.BIOMETRIC_USERNAME]
         )
     }
 
@@ -72,6 +87,36 @@ class SessionPreferences(private val context: Context) {
             prefs.remove(Keys.TENANT_ID)
             prefs.remove(Keys.ROLE)
             prefs.remove(Keys.USERNAME)
+        }
+    }
+
+    suspend fun saveRememberedLogin(username: String, encryptedPassword: String) {
+        context.hesabatyDataStore.edit { prefs ->
+            prefs[Keys.SAVED_LOGIN_USERNAME] = username
+            prefs[Keys.SAVED_LOGIN_PASSWORD_ENC] = encryptedPassword
+            prefs[Keys.SAVED_REMEMBER_CHECKED] = true
+        }
+    }
+
+    suspend fun clearRememberedLogin() {
+        context.hesabatyDataStore.edit { prefs ->
+            prefs.remove(Keys.SAVED_LOGIN_USERNAME)
+            prefs.remove(Keys.SAVED_LOGIN_PASSWORD_ENC)
+            prefs[Keys.SAVED_REMEMBER_CHECKED] = false
+        }
+    }
+
+    suspend fun saveBiometricAccount(userId: String, username: String) {
+        context.hesabatyDataStore.edit { prefs ->
+            prefs[Keys.BIOMETRIC_USER_ID] = userId
+            prefs[Keys.BIOMETRIC_USERNAME] = username
+        }
+    }
+
+    suspend fun clearBiometricAccount() {
+        context.hesabatyDataStore.edit { prefs ->
+            prefs.remove(Keys.BIOMETRIC_USER_ID)
+            prefs.remove(Keys.BIOMETRIC_USERNAME)
         }
     }
 

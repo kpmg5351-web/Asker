@@ -1,5 +1,8 @@
 package com.example
 
+import android.app.KeyguardManager
+import android.content.Context
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -100,6 +103,7 @@ import com.example.ui.theme.PrimaryBlue
 import com.example.ui.theme.PrimaryDarkBlue
 import com.example.ui.viewmodel.HesabatyViewModel
 import com.example.ui.viewmodel.SessionUiState
+import kotlinx.coroutines.delay
 
 class MainActivity : FragmentActivity() {
 
@@ -116,6 +120,7 @@ class MainActivity : FragmentActivity() {
             val sessionState by viewModel.sessionState.collectAsStateWithLifecycle()
             val isDarkMode by viewModel.isDarkMode.collectAsStateWithLifecycle()
             val isBusy by viewModel.isBusy.collectAsStateWithLifecycle()
+            val savedCredentials by viewModel.savedLoginCredentials.collectAsStateWithLifecycle()
             val snackbarHostState = remember { SnackbarHostState() }
 
             val lifecycleOwner = LocalLifecycleOwner.current
@@ -151,10 +156,23 @@ class MainActivity : FragmentActivity() {
                             LoginScreen(
                                 isBusy = isBusy,
                                 isDarkMode = isDarkMode,
+                                savedCredentials = savedCredentials,
                                 deviceLabel = viewModel.currentDeviceLabel,
                                 deviceActivationCode = viewModel.currentDeviceActivationCode,
                                 onToggleDarkMode = { viewModel.setDarkMode(it) },
                                 onLogin = { u, p, rememberMe, onErr -> viewModel.login(u, p, rememberMe, onErr) },
+                                onRememberMeChanged = { viewModel.setRememberMeChecked(it) },
+                                onRequestBiometricLogin = { onErr ->
+                                    if (savedCredentials.biometricUsername == null) {
+                                        onErr("سجّل الدخول بحساب المحل أولًا لتفعيل الدخول السريع بالبصمة")
+                                    } else {
+                                        triggerBiometricPrompt(
+                                            onSuccess = { viewModel.loginWithBiometric(onErr) },
+                                            onUnavailable = { msg -> onErr(msg) },
+                                            onError = { msg -> onErr(msg) }
+                                        )
+                                    }
+                                },
                                 onOpenTrial = { onErr -> viewModel.openTrialAccount(onErr) },
                                 onCreateOnThisPhone = { adminU, adminP, sName, oName, addr, ph, uName, pass, confPass, onErr ->
                                     viewModel.createAndBindAccountOnThisPhone(
@@ -199,9 +217,11 @@ class MainActivity : FragmentActivity() {
                         is SessionUiState.ShopWorkspace -> {
                             if (state.requiresBiometricUnlock) {
                                 LaunchedEffect(Unit) {
+                                    delay(250)
                                     triggerBiometricPrompt(
                                         onSuccess = { viewModel.unlockBiometric() },
-                                        onFallbackUnavailable = { viewModel.unlockBiometric() }
+                                        onUnavailable = { viewModel.unlockBiometric() },
+                                        onError = { msg -> viewModel.emitMessage(msg, isError = true) }
                                     )
                                 }
                                 BiometricLockScreen(
@@ -209,7 +229,8 @@ class MainActivity : FragmentActivity() {
                                     onRequestBiometric = {
                                         triggerBiometricPrompt(
                                             onSuccess = { viewModel.unlockBiometric() },
-                                            onFallbackUnavailable = { viewModel.unlockBiometric() }
+                                            onUnavailable = { viewModel.unlockBiometric() },
+                                            onError = { msg -> viewModel.emitMessage(msg, isError = true) }
                                         )
                                     },
                                     onLogout = { viewModel.logout() }
@@ -244,15 +265,26 @@ class MainActivity : FragmentActivity() {
 
     private fun triggerBiometricPrompt(
         onSuccess: () -> Unit,
-        onFallbackUnavailable: () -> Unit
+        onUnavailable: (String) -> Unit,
+        onError: (String) -> Unit
     ) {
         val manager = BiometricManager.from(this)
-        val authenticators = BiometricManager.Authenticators.BIOMETRIC_STRONG or
+        val biometricOnly = BiometricManager.Authenticators.BIOMETRIC_STRONG or
+            BiometricManager.Authenticators.BIOMETRIC_WEAK
+        val strongWithCredential = BiometricManager.Authenticators.BIOMETRIC_STRONG or
             BiometricManager.Authenticators.DEVICE_CREDENTIAL
-        if (manager.canAuthenticate(authenticators) != BiometricManager.BIOMETRIC_SUCCESS) {
-            onFallbackUnavailable()
+
+        val canBiometric = manager.canAuthenticate(biometricOnly) == BiometricManager.BIOMETRIC_SUCCESS
+        val canStrongOrCredential = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R &&
+            manager.canAuthenticate(strongWithCredential) == BiometricManager.BIOMETRIC_SUCCESS
+        val keyguardManager = getSystemService(Context.KEYGUARD_SERVICE) as? KeyguardManager
+        val hasDeviceLock = keyguardManager?.isDeviceSecure == true
+
+        if (!canBiometric && !canStrongOrCredential && !hasDeviceLock) {
+            onUnavailable("البصمة أو قفل الشاشة غير مفعّل في إعدادات هذا الهاتف")
             return
         }
+
         val executor = ContextCompat.getMainExecutor(this)
         val prompt = BiometricPrompt(
             this,
@@ -261,14 +293,42 @@ class MainActivity : FragmentActivity() {
                 override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
                     onSuccess()
                 }
+
+                override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
+                    if (errorCode != BiometricPrompt.ERROR_USER_CANCELED &&
+                        errorCode != BiometricPrompt.ERROR_NEGATIVE_BUTTON &&
+                        errorCode != BiometricPrompt.ERROR_CANCELED
+                    ) {
+                        val msg = errString.toString().ifBlank { "تعذر التحقق من البصمة" }
+                        onError(msg)
+                    }
+                }
             }
         )
-        val info = BiometricPrompt.PromptInfo.Builder()
+
+        val builder = BiometricPrompt.PromptInfo.Builder()
             .setTitle("فتح نظام حساباتي")
             .setSubtitle("استخدم البصمة أو قفل الجهاز للمتابعة")
-            .setAllowedAuthenticators(authenticators)
-            .build()
-        prompt.authenticate(info)
+
+        when {
+            canBiometric -> {
+                builder.setAllowedAuthenticators(biometricOnly)
+                builder.setNegativeButtonText("إلغاء")
+            }
+            canStrongOrCredential -> {
+                builder.setAllowedAuthenticators(strongWithCredential)
+            }
+            else -> {
+                @Suppress("DEPRECATION")
+                builder.setDeviceCredentialAllowed(true)
+            }
+        }
+
+        try {
+            prompt.authenticate(builder.build())
+        } catch (e: Exception) {
+            onError(e.localizedMessage ?: "تعذر تشغيل نافذة البصمة على هذا الجهاز")
+        }
     }
 }
 
@@ -297,8 +357,9 @@ private fun ShopWorkspaceHost(
     val navController = rememberNavController()
     val backStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = backStackEntry?.destination?.route ?: "dashboard"
+    val currentBaseRoute = currentRoute.substringBefore("?")
     val isImeVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
-    val showMainNav = shopTopTabs.any { it.route == currentRoute }
+    val showMainNav = shopTopTabs.any { it.route == currentBaseRoute }
 
     fun navigateTopTab(route: String) {
         navController.navigate(route) {
@@ -323,7 +384,7 @@ private fun ShopWorkspaceHost(
                 if (showMainNav && !useNavRail && !isImeVisible) {
                     HesabatyFloatingBottomBar(
                         tabs = shopTopTabs,
-                        currentRoute = currentRoute,
+                        currentRoute = currentBaseRoute,
                         onSelectTab = { navigateTopTab(it) }
                     )
                 }
@@ -340,7 +401,7 @@ private fun ShopWorkspaceHost(
                     NavigationRail(containerColor = MaterialTheme.colorScheme.surface) {
                         shopTopTabs.forEach { tab ->
                             NavigationRailItem(
-                                selected = currentRoute == tab.route,
+                                selected = currentBaseRoute == tab.route,
                                 onClick = { navigateTopTab(tab.route) },
                                 icon = { Icon(tab.icon, contentDescription = tab.label) },
                                 label = { Text(tab.label) }

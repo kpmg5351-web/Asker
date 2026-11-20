@@ -192,4 +192,32 @@ object SecurityUtils {
             null
         }
     }
+
+    fun encryptLocalSecret(plaintext: String): String {
+        val payload = encryptBackup(plaintext.toByteArray(Charsets.UTF_8), passphrase = null)
+        return listOf(
+            payload.keyMode,
+            payload.saltBase64,
+            payload.ivBase64,
+            payload.ciphertextBase64,
+            payload.plaintextSha256
+        ).joinToString("|")
+    }
+
+    fun decryptLocalSecret(encoded: String): String? {
+        return try {
+            val parts = encoded.split('|')
+            if (parts.size != 5) return null
+            val payload = EncryptedPayload(
+                keyMode = parts[0],
+                saltBase64 = parts[1],
+                ivBase64 = parts[2],
+                ciphertextBase64 = parts[3],
+                plaintextSha256 = parts[4]
+            )
+            decryptBackup(payload, passphrase = null).toString(Charsets.UTF_8)
+        } catch (_: Throwable) {
+            null
+        }
+    }
 }

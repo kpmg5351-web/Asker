@@ -5,6 +5,8 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -75,6 +77,9 @@ fun SuppliersScreen(
     val extras = HesabatyThemeExtras.colors
 
     Scaffold(
+        modifier = Modifier.fillMaxSize(),
+        containerColor = MaterialTheme.colorScheme.background,
+        contentWindowInsets = WindowInsets(0),
         topBar = {
             HesabatyTopBar(
                 title = "الموردون (${suppliers.size})",
@@ -97,6 +102,7 @@ fun SuppliersScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
+                .consumeWindowInsets(innerPadding)
         ) {
             OutlinedTextField(
                 value = searchQuery,
@@ -120,11 +126,16 @@ fun SuppliersScreen(
                         "جرّب البحث باسم آخر أو رقم هاتف مختلف."
                     },
                     actionLabel = if (suppliers.isEmpty()) "إضافة مورد جديد" else null,
-                    onAction = if (suppliers.isEmpty()) ({ showAddDialog = true }) else null
+                    onAction = if (suppliers.isEmpty()) ({ showAddDialog = true }) else null,
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
                 )
             } else {
                 LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth(),
                     contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 88.dp, top = 4.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {

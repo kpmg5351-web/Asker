@@ -5,6 +5,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.example.core.EgyptTime
+import com.example.core.SecurityUtils
 import com.example.data.AppContainer
 import com.example.data.backup.BackupOpResult
 import com.example.data.backup.DriveFileItem
@@ -31,6 +32,7 @@ import com.example.data.repository.ReportOutput
 import com.example.data.repository.ReportType
 import com.example.data.repository.SaleLineDraft
 import com.example.data.repository.TrialStatusInfo
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -44,8 +46,11 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.UUID
 
@@ -69,6 +74,13 @@ sealed class SessionUiState {
 data class UiEventMessage(
     val text: String,
     val isError: Boolean = false
+)
+
+data class SavedLoginCredentials(
+    val username: String = "",
+    val password: String = "",
+    val rememberMe: Boolean = false,
+    val biometricUsername: String? = null
 )
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -100,6 +112,21 @@ class HesabatyViewModel(private val container: AppContainer) : ViewModel() {
 
     private val _isDarkMode = MutableStateFlow(false)
     val isDarkMode: StateFlow<Boolean> = _isDarkMode.asStateFlow()
+
+    private val _savedLoginCredentials = MutableStateFlow(SavedLoginCredentials())
+    val savedLoginCredentials: StateFlow<SavedLoginCredentials> = _savedLoginCredentials.asStateFlow()
+
+    private fun mapSavedCredentials(stored: com.example.data.local.StoredSession): SavedLoginCredentials {
+        val decrypted = stored.savedLoginPasswordEnc
+            ?.let { SecurityUtils.decryptLocalSecret(it) }
+            .orEmpty()
+        return SavedLoginCredentials(
+            username = if (stored.savedRememberChecked) stored.savedLoginUsername.orEmpty() else "",
+            password = if (stored.savedRememberChecked && decrypted.isNotEmpty()) decrypted else "",
+            rememberMe = stored.savedRememberChecked,
+            biometricUsername = stored.biometricUsername
+        )
+    }
 
     private val _events = MutableSharedFlow<UiEventMessage>(extraBufferCapacity = 8)
     val events: SharedFlow<UiEventMessage> = _events.asSharedFlow()
@@ -187,8 +214,16 @@ class HesabatyViewModel(private val container: AppContainer) : ViewModel() {
         viewModelScope.launch {
             authRepo.ensureMasterAdminSeeded()
             authRepo.ensureTrialAccountSeeded()
-            val stored = sessionPrefs.sessionFlow.first()
+            val stored = withContext(Dispatchers.IO) { sessionPrefs.sessionFlow.first() }
+            _savedLoginCredentials.value = withContext(Dispatchers.IO) { mapSavedCredentials(stored) }
             _isDarkMode.value = stored.darkMode
+
+            launch {
+                sessionPrefs.sessionFlow
+                    .map { mapSavedCredentials(it) }
+                    .flowOn(Dispatchers.IO)
+                    .collect { _savedLoginCredentials.value = it }
+            }
 
             if (stored.userId != null && stored.rememberMe) {
                 when (val res = authRepo.validateOrRestoreSession(stored.userId)) {
@@ -279,7 +314,69 @@ class HesabatyViewModel(private val container: AppContainer) : ViewModel() {
                         )
                     }
                     is AuthResult.Success -> {
+                        if (res.data.user.role != UserRoles.MASTER_ADMIN) {
+                            if (rememberMe) {
+                                val encryptedPassword = withContext(Dispatchers.IO) {
+                                    SecurityUtils.encryptLocalSecret(password)
+                                }
+                                sessionPrefs.saveRememberedLogin(
+                                    username = res.data.user.username,
+                                    encryptedPassword = encryptedPassword
+                                )
+                            } else {
+                                sessionPrefs.clearRememberedLogin()
+                            }
+                            sessionPrefs.saveBiometricAccount(res.data.user.id, res.data.user.username)
+                        }
                         enterAuthenticatedSession(res.data, rememberMe)
+                    }
+                }
+            } finally {
+                _isBusy.value = false
+            }
+        }
+    }
+
+    fun setRememberMeChecked(checked: Boolean) {
+        if (!checked) {
+            viewModelScope.launch {
+                sessionPrefs.clearRememberedLogin()
+            }
+        }
+    }
+
+    fun loginWithBiometric(onError: (String) -> Unit) {
+        viewModelScope.launch {
+            _isBusy.value = true
+            try {
+                val stored = sessionPrefs.sessionFlow.first()
+                val bioUserId = stored.biometricUserId
+                if (bioUserId.isNullOrBlank()) {
+                    onError("سجّل الدخول بحساب المحل أولًا لتفعيل الدخول السريع بالبصمة")
+                    return@launch
+                }
+                when (val res = authRepo.validateOrRestoreSession(bioUserId)) {
+                    is AuthResult.Success -> {
+                        if (res.data.user.role == UserRoles.MASTER_ADMIN) {
+                            onError("الدخول بالبصمة غير متاح لحساب الإدارة")
+                        } else {
+                            enterAuthenticatedSession(
+                                res.data,
+                                rememberMe = stored.savedRememberChecked || stored.rememberMe
+                            )
+                        }
+                    }
+                    is AuthResult.TrialExpired -> {
+                        _activeTenantId.value = null
+                        _sessionState.value = SessionUiState.TrialExpired(
+                            isClockTampered = res.isClockTampered,
+                            trialStartedAt = res.trialStartedAt,
+                            trialExpiresAt = res.trialExpiresAt
+                        )
+                    }
+                    is AuthResult.Error -> {
+                        sessionPrefs.clearBiometricAccount()
+                        onError(res.message)
                     }
                 }
             } finally {
@@ -404,6 +501,16 @@ class HesabatyViewModel(private val container: AppContainer) : ViewModel() {
                 is AuthResult.Error -> onDone(false, res.message)
                 is AuthResult.TrialExpired -> onDone(false, "انتهت الفترة التجريبية")
                 is AuthResult.Success -> {
+                    val user = currentUser()
+                    if (user != null && user.role != UserRoles.MASTER_ADMIN && savedLoginCredentials.value.rememberMe) {
+                        val encryptedPassword = withContext(Dispatchers.IO) {
+                            SecurityUtils.encryptLocalSecret(newPassword)
+                        }
+                        sessionPrefs.saveRememberedLogin(
+                            username = user.username,
+                            encryptedPassword = encryptedPassword
+                        )
+                    }
                     emitMessage("تم تغيير كلمة المرور بنجاح")
                     onDone(true, "تم تغيير كلمة المرور بنجاح")
                 }
@@ -446,6 +553,14 @@ class HesabatyViewModel(private val container: AppContainer) : ViewModel() {
                     is AuthResult.Error -> onDone(false, res.message)
                     is AuthResult.TrialExpired -> onDone(false, "تعذر إنشاء الحساب")
                     is AuthResult.Success -> {
+                        val encryptedPassword = withContext(Dispatchers.IO) {
+                            SecurityUtils.encryptLocalSecret(password)
+                        }
+                        sessionPrefs.saveRememberedLogin(
+                            username = res.data.user.username,
+                            encryptedPassword = encryptedPassword
+                        )
+                        sessionPrefs.saveBiometricAccount(res.data.user.id, res.data.user.username)
                         enterAuthenticatedSession(res.data, rememberMe = true)
                         val msg = "تم إنشاء حساب \"${res.data.tenant?.shopName.orEmpty()}\" وربطه حصريًا بهذا الهاتف بنجاح"
                         emitMessage(msg)
@@ -469,6 +584,7 @@ class HesabatyViewModel(private val container: AppContainer) : ViewModel() {
                     is AuthResult.Error -> onDone(false, res.message)
                     is AuthResult.TrialExpired -> onDone(false, "تعذر تفعيل الحساب")
                     is AuthResult.Success -> {
+                        sessionPrefs.saveBiometricAccount(res.data.user.id, res.data.user.username)
                         enterAuthenticatedSession(res.data, rememberMe = true)
                         val msg = "تم تفعيل حساب \"${res.data.tenant?.shopName.orEmpty()}\" وربطه بهذا الهاتف بنجاح"
                         emitMessage(msg)
