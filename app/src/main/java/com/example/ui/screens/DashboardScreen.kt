@@ -126,6 +126,7 @@ fun DashboardScreen(
     val customers by viewModel.customers.collectAsStateWithLifecycle()
     val suppliers by viewModel.suppliers.collectAsStateWithLifecycle()
     val invoices by viewModel.invoices.collectAsStateWithLifecycle()
+    val purchaseInvoices by viewModel.purchaseInvoices.collectAsStateWithLifecycle()
     val products by viewModel.products.collectAsStateWithLifecycle()
     val isDark by viewModel.isDarkMode.collectAsStateWithLifecycle()
     val settings by viewModel.appSettings.collectAsStateWithLifecycle()
@@ -160,6 +161,12 @@ fun DashboardScreen(
     val matchedInvoices = remember(invoices, trimmedQuery) {
         if (trimmedQuery.isEmpty()) emptyList()
         else invoices.filter {
+            it.invoiceNumber.contains(trimmedQuery, ignoreCase = true)
+        }.take(3)
+    }
+    val matchedPurchaseInvoices = remember(purchaseInvoices, trimmedQuery) {
+        if (trimmedQuery.isEmpty()) emptyList()
+        else purchaseInvoices.filter {
             it.invoiceNumber.contains(trimmedQuery, ignoreCase = true)
         }.take(3)
     }
@@ -211,7 +218,7 @@ fun DashboardScreen(
             item {
                 Box(modifier = Modifier.padding(horizontal = 16.dp)) {
                     HesabatyCard(modifier = Modifier.fillMaxWidth()) {
-                        val hasAny = matchedCustomers.isNotEmpty() || matchedSuppliers.isNotEmpty() || matchedInvoices.isNotEmpty() || matchedProducts.isNotEmpty()
+                        val hasAny = matchedCustomers.isNotEmpty() || matchedSuppliers.isNotEmpty() || matchedInvoices.isNotEmpty() || matchedPurchaseInvoices.isNotEmpty() || matchedProducts.isNotEmpty()
                         if (!hasAny) {
                             Text(
                                 text = "لا توجد نتائج مطابقة لـ \"$trimmedQuery\"",
@@ -279,8 +286,28 @@ fun DashboardScreen(
                                         )
                                     }
                                 }
-                                if (matchedProducts.isNotEmpty()) {
+                                if (matchedPurchaseInvoices.isNotEmpty()) {
                                     if (matchedCustomers.isNotEmpty() || matchedSuppliers.isNotEmpty() || matchedInvoices.isNotEmpty()) HorizontalDivider()
+                                    Text(
+                                        text = "فواتير الشراء",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontWeight = FontWeight.Bold,
+                                        color = PrimaryDarkBlue
+                                    )
+                                    matchedPurchaseInvoices.forEach { pur ->
+                                        SearchResultRow(
+                                            icon = Icons.Default.Receipt,
+                                            title = "فاتورة شراء ${pur.invoiceNumber}",
+                                            subtitle = "الإجمالي: ${MoneyFormatter.formatEgp(pur.totalPiasters, currency)}",
+                                            onClick = {
+                                                searchQuery = ""
+                                                onNavigate("purchase_preview/${pur.id}")
+                                            }
+                                        )
+                                    }
+                                }
+                                if (matchedProducts.isNotEmpty()) {
+                                    if (matchedCustomers.isNotEmpty() || matchedSuppliers.isNotEmpty() || matchedInvoices.isNotEmpty() || matchedPurchaseInvoices.isNotEmpty()) HorizontalDivider()
                                     Text(
                                         text = "الأصناف",
                                         style = MaterialTheme.typography.labelMedium,
@@ -556,6 +583,38 @@ fun DashboardScreen(
                         accentContainer = extras.successContainer,
                         testTag = "action_backup",
                         onClick = { onNavigate("backup") },
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    QuickActionTile(
+                        label = "فاتورة شراء",
+                        icon = Icons.Default.AddShoppingCart,
+                        accentColor = PrimaryDarkBlue,
+                        accentContainer = Color(0xFFE6EEFA),
+                        testTag = "action_new_purchase",
+                        onClick = { onNavigate("new_purchase") },
+                        modifier = Modifier.weight(1f)
+                    )
+                    QuickActionTile(
+                        label = "المشتريات",
+                        icon = Icons.Default.Receipt,
+                        accentColor = PrimaryBlue,
+                        accentContainer = Color(0xFFEAF3FF),
+                        testTag = "action_purchases",
+                        onClick = { onNavigate("purchases") },
+                        modifier = Modifier.weight(1f)
+                    )
+                    QuickActionTile(
+                        label = "الإعدادات",
+                        icon = Icons.Default.Settings,
+                        accentColor = extras.wallet,
+                        accentContainer = extras.walletContainer,
+                        testTag = "action_settings",
+                        onClick = { onNavigate("settings") },
                         modifier = Modifier.weight(1f)
                     )
                 }

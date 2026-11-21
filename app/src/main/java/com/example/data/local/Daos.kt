@@ -359,3 +359,45 @@ interface ProductDao {
     @Query("DELETE FROM products WHERE tenantId = :tenantId AND id = :productId")
     suspend fun deleteProduct(tenantId: String, productId: String)
 }
+
+@Dao
+interface PurchaseInvoiceDao {
+    @Query("SELECT * FROM purchase_invoices WHERE tenantId = :tenantId ORDER BY createdAt DESC")
+    fun observePurchaseInvoices(tenantId: String): Flow<List<PurchaseInvoiceEntity>>
+
+    @Query("SELECT * FROM purchase_invoices WHERE tenantId = :tenantId ORDER BY createdAt DESC")
+    suspend fun getPurchaseInvoices(tenantId: String): List<PurchaseInvoiceEntity>
+
+    @Query("SELECT * FROM purchase_invoices WHERE tenantId = :tenantId AND supplierId = :supplierId ORDER BY createdAt DESC")
+    fun observeSupplierPurchaseInvoices(tenantId: String, supplierId: String): Flow<List<PurchaseInvoiceEntity>>
+
+    @Query("SELECT * FROM purchase_invoices WHERE tenantId = :tenantId AND id = :purchaseId LIMIT 1")
+    fun observePurchaseInvoiceById(tenantId: String, purchaseId: String): Flow<PurchaseInvoiceEntity?>
+
+    @Query("SELECT * FROM purchase_invoices WHERE tenantId = :tenantId AND id = :purchaseId LIMIT 1")
+    suspend fun getPurchaseInvoiceById(tenantId: String, purchaseId: String): PurchaseInvoiceEntity?
+
+    @Query("SELECT * FROM purchase_invoices WHERE tenantId = :tenantId AND idempotencyKey = :key LIMIT 1")
+    suspend fun getByIdempotencyKey(tenantId: String, key: String): PurchaseInvoiceEntity?
+
+    @Query("SELECT COUNT(*) FROM purchase_invoices WHERE tenantId = :tenantId")
+    suspend fun countPurchaseInvoices(tenantId: String): Int
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertPurchaseInvoice(invoice: PurchaseInvoiceEntity)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertPurchaseInvoices(invoices: List<PurchaseInvoiceEntity>)
+
+    @Query("SELECT * FROM purchase_invoice_items WHERE tenantId = :tenantId AND purchaseInvoiceId = :purchaseId ORDER BY sortOrder ASC")
+    fun observePurchaseInvoiceItems(tenantId: String, purchaseId: String): Flow<List<PurchaseInvoiceItemEntity>>
+
+    @Query("SELECT * FROM purchase_invoice_items WHERE tenantId = :tenantId AND purchaseInvoiceId = :purchaseId ORDER BY sortOrder ASC")
+    suspend fun getPurchaseInvoiceItems(tenantId: String, purchaseId: String): List<PurchaseInvoiceItemEntity>
+
+    @Query("SELECT * FROM purchase_invoice_items WHERE tenantId = :tenantId")
+    suspend fun getAllPurchaseInvoiceItems(tenantId: String): List<PurchaseInvoiceItemEntity>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertPurchaseInvoiceItems(items: List<PurchaseInvoiceItemEntity>)
+}

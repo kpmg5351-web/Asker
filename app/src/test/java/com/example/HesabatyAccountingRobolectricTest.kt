@@ -15,6 +15,7 @@ import com.example.data.local.DailyInvoiceStatuses
 import com.example.data.local.HesabatyDatabase
 import com.example.data.local.InvoiceStatuses
 import com.example.data.local.PaymentMethods
+import com.example.data.local.PurchaseTypes
 import com.example.data.local.SaleTypes
 import com.example.data.local.SupplierTxTypes
 import com.example.data.local.UserEntity
@@ -22,6 +23,8 @@ import com.example.data.repository.AccountingRepository
 import com.example.data.repository.AuthRepository
 import com.example.data.repository.AuthResult
 import com.example.data.repository.InstallmentDraft
+import com.example.data.repository.PurchaseLineDraft
+import com.example.data.repository.ReportType
 import com.example.data.repository.RepoResult
 import com.example.data.repository.SaleLineDraft
 import kotlinx.coroutines.flow.first
@@ -661,5 +664,185 @@ class HesabatyAccountingRobolectricTest {
         val updateRes = accRepo.updateCustomerCreditLimit(tenantAId, ownerA, cidB, 100_000L)
         assertTrue(updateRes is RepoResult.Success)
         assertTrue(accRepo.observeCreditLimitBreaches(tenantAId).first().isEmpty())
+    }
+
+    // 21. اختبار فاتورة الشراء الكاملة (تحديث حساب المورد + تزويد مخزون الأصناف + Idempotency + تقرير المشتريات)
+    @Test
+    fun test21_purchaseInvoiceRestocksInventoryAndPostsSupplierLedger() = runTest {
+        val supRes = accRepo.addSupplier(
+            tenantId = tenantAId,
+            actor = ownerA,
+            name = "مؤسسة الفجر للمواد الغذائية",
+            phone = "01055443322",
+            whatsappPhone = "01055443322",
+            address = "العبور - سوق الجملة",
+            notes = "",
+            openingBalancePiasters = 0L
+        )
+        assertTrue(supRes is RepoResult.Success)
+        val sid = (supRes as RepoResult.Success).data.id
+
+        val prodRes = accRepo.addProduct(
+            tenantId = tenantAId,
+            actor = ownerA,
+            name = "كرتونة أرز مصري 20 كجم",
+            category = "مواد غذائية",
+            skuOrBarcode = "RICE-20",
+            unitLabel = "كرتونة",
+            salePricePiasters = 68_000L,
+            purchasePricePiasters = 60_000L,
+            stockQuantityMilli = 5_000L, // 5 cartons initially
+            trackStock = true,
+            minStockAlertMilli = 2_000L,
+            notes = ""
+        )
+        assertTrue(prodRes is RepoResult.Success)
+        val prod = (prodRes as RepoResult.Success).data
+
+        val idemKey = "purchase-idem-test-001"
+        val purRes = accRepo.createPurchaseInvoice(
+            tenantId = tenantAId,
+            actor = ownerA,
+            supplierId = sid,
+            lines = listOf(
+                PurchaseLineDraft(
+                    description = "كرتونة أرز مصري 20 كجم (كرتونة)",
+                    unitPricePiasters = 60_000L,
+                    quantityMilli = 3_000L, // 3 cartons = 180_000 piasters
+                    productId = prod.id
+                ),
+                PurchaseLineDraft(
+                    description = "مصاريف نقل وتحميل",
+                    unitPricePiasters = 10_000L,
+                    quantityMilli = 2_000L, // 2 units = 20_000 piasters
+                    productId = null
+                )
+            ),
+            purchaseType = PurchaseTypes.CREDIT,
+            paymentMethod = PaymentMethods.CASH,
+            paidNowPiasters = 80_000L, // 800 EGP paid now, 1,200 EGP remaining
+            dueDateMillis = EgyptTime.nowMillis() + 7L * 24 * 60 * 60 * 1000,
+            notes = "توريد صباحي شامل التفريغ",
+            idempotencyKey = idemKey
+        )
+        assertTrue(purRes is RepoResult.Success)
+        val purchase = (purRes as RepoResult.Success).data
+        assertEquals("PUR-00001", purchase.invoiceNumber)
+        assertEquals(200_000L, purchase.totalPiasters)
+        assertEquals(80_000L, purchase.paidPiasters)
+        assertEquals(120_000L, purchase.remainingPiasters)
+        assertEquals(InvoiceStatuses.PARTIAL, purchase.status)
+
+        // Tracked product stock must increase from 5 to 8 cartons
+        val updatedProd = db.productDao().getProductById(tenantAId, prod.id)!!
+        assertEquals(8_000L, updatedProd.stockQuantityMilli)
+
+        // Supplier balance must reflect 2,000 EGP due, 800 EGP paid, 1,200 EGP remaining
+        val updatedSupplier = accRepo.observeSupplier(tenantAId, sid).first()!!
+        assertEquals(200_000L, updatedSupplier.totalDuePiasters)
+        assertEquals(80_000L, updatedSupplier.totalPaidPiasters)
+        assertEquals(120_000L, updatedSupplier.currentBalancePiasters)
+
+        // Idempotency retry must not duplicate purchase invoice or stock
+        val dupRes = accRepo.createPurchaseInvoice(
+            tenantId = tenantAId,
+            actor = ownerA,
+            supplierId = sid,
+            lines = listOf(PurchaseLineDraft("بند مكرر", 60_000L, 3_000L, prod.id)),
+            purchaseType = PurchaseTypes.CREDIT,
+            paymentMethod = PaymentMethods.CASH,
+            paidNowPiasters = 80_000L,
+            dueDateMillis = null,
+            notes = "",
+            idempotencyKey = idemKey
+        )
+        assertTrue(dupRes is RepoResult.Success)
+        assertEquals(purchase.id, (dupRes as RepoResult.Success).data.id)
+        assertEquals(8_000L, db.productDao().getProductById(tenantAId, prod.id)!!.stockQuantityMilli)
+
+        // Purchase report must reflect the invoice and total quantity (5)
+        val report = accRepo.generateReport(
+            tenantId = tenantAId,
+            type = ReportType.PURCHASES,
+            fromMillis = EgyptTime.nowMillis() - 86_400_000L,
+            toMillis = EgyptTime.nowMillis() + 86_400_000L,
+            query = ""
+        )
+        assertEquals(1, report.rows.size)
+        assertTrue(report.rows.first().contains("PUR-00001"))
+        assertTrue(report.rows.first().contains("5"))
+    }
+
+    // 22. اختبار ظهور كامل التفاصيل والعدد/الكمية بدون اختصار في رسالة الواتساب وصورة الفاتورة
+    @Test
+    fun test22_invoiceWhatsAppMessageAndPngRenderIncludeFullQuantitiesAndDetails() {
+        val manyLines = (1..16).map { idx ->
+            PdfInvoiceGenerator.InvoiceLineRow(
+                description = "صنف رقم $idx بوصف تفصيلي طويل للتأكد من عدم اختصار أي نص",
+                unitPricePiasters = 15_000L,
+                quantityMilli = 2_500L, // 2.5 units each -> 40 total quantity
+                lineTotalPiasters = 37_500L
+            )
+        }
+        val waMsg = WhatsAppHelper.buildCustomerInvoiceMessage(
+            customerName = "محلات السلام",
+            shopName = "معرض النور للتجارة",
+            invoiceNumber = "INV-00099",
+            dateFormatted = "2026-11-21 12:00",
+            totalPiasters = 600_000L,
+            paidPiasters = 200_000L,
+            remainingPiasters = 400_000L,
+            invoiceTypeLabel = "فاتورة آجل",
+            lines = manyLines,
+            dueDateFormatted = "2026-12-01",
+            notes = "ملاحظة التسليم الكاملة في المخزن الشرقي"
+        )
+        // All 16 lines (past old 12-line limit) and quantities must be present
+        assertTrue(waMsg.contains("صنف رقم 16 بوصف تفصيلي طويل"))
+        assertTrue(waMsg.contains("عدد البنود: *16*"))
+        assertTrue(waMsg.contains("إجمالي العدد/الكمية: *40*"))
+        assertTrue(waMsg.contains("2.5"))
+        assertTrue(waMsg.contains("2026-12-01"))
+        assertTrue(waMsg.contains("ملاحظة التسليم الكاملة في المخزن الشرقي"))
+
+        val purMsg = WhatsAppHelper.buildPurchaseInvoiceMessage(
+            supplierName = "شركة الأمل",
+            shopName = "معرض النور للتجارة",
+            invoiceNumber = "PUR-00007",
+            dateFormatted = "2026-11-21 12:30",
+            totalPiasters = 600_000L,
+            paidPiasters = 600_000L,
+            remainingPiasters = 0L,
+            lines = manyLines,
+            dueDateFormatted = "2026-12-10",
+            notes = "استلام كامل بفحص الجودة"
+        )
+        assertTrue(purMsg.contains("صنف رقم 16 بوصف تفصيلي طويل"))
+        assertTrue(purMsg.contains("إجمالي العدد/الكمية: *40*"))
+        assertTrue(purMsg.contains("استلام كامل بفحص الجودة"))
+
+        val (pngFile, _) = PdfInvoiceGenerator.generateInvoicePng(
+            context = context,
+            model = PdfInvoiceGenerator.InvoicePrintModel(
+                shopName = "معرض النور للتجارة",
+                shopAddress = "القاهرة - مدينة نصر",
+                shopPhone = "01012345678",
+                customerName = "محلات السلام",
+                invoiceNumber = "INV-00099",
+                dateFormatted = "2026-11-21 12:00",
+                invoiceTypeLabel = "فاتورة آجل",
+                paymentMethodLabel = "نقدي",
+                lines = manyLines,
+                totalPiasters = 600_000L,
+                paidPiasters = 200_000L,
+                remainingPiasters = 400_000L,
+                notes = "ملاحظة التسليم الكاملة في المخزن الشرقي مع مراجعة الأصناف بالكامل",
+                signatureName = "أحمد محمود",
+                recipientPhone = "01099887766",
+                dueDateFormatted = "2026-12-01"
+            )
+        )
+        assertTrue(pngFile.exists())
+        assertTrue(pngFile.length() > 1000L)
     }
 }

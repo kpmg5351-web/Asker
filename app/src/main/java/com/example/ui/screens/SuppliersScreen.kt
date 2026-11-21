@@ -57,7 +57,8 @@ fun SuppliersScreen(
     viewModel: HesabatyViewModel,
     quickPayBanner: Boolean = false,
     onBack: () -> Unit,
-    onOpenSupplier: (String) -> Unit
+    onOpenSupplier: (String) -> Unit,
+    onOpenPurchases: () -> Unit = {}
 ) {
     val suppliers by viewModel.suppliers.collectAsStateWithLifecycle()
     val settings by viewModel.appSettings.collectAsStateWithLifecycle()
@@ -83,8 +84,16 @@ fun SuppliersScreen(
         topBar = {
             HesabatyTopBar(
                 title = "الموردون (${suppliers.size})",
-                subtitle = if (quickPayBanner) "اختر المورد لتسجيل دفعة له" else "إدارة حسابات الموردين والمدفوعات",
-                onBack = onBack
+                subtitle = if (quickPayBanner) "اختر المورد لتسجيل دفعة له" else "إدارة حسابات الموردين والمشتريات",
+                onBack = onBack,
+                actions = {
+                    TextButton(
+                        onClick = onOpenPurchases,
+                        modifier = Modifier.testTag("suppliers_open_purchases_btn")
+                    ) {
+                        Text("فواتير الشراء", fontWeight = FontWeight.Bold)
+                    }
+                }
             )
         },
         floatingActionButton = {
@@ -226,7 +235,7 @@ fun SuppliersScreen(
 }
 
 @Composable
-private fun AddSupplierDialog(
+fun AddSupplierDialog(
     onDismiss: () -> Unit,
     onSave: (String, String, String, String, String, Long, (String) -> Unit) -> Unit
 ) {

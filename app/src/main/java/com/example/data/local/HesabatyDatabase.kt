@@ -25,9 +25,11 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         AuditLogEntity::class,
         AppSettingEntity::class,
         DeviceTrialRegistryEntity::class,
-        ProductEntity::class
+        ProductEntity::class,
+        PurchaseInvoiceEntity::class,
+        PurchaseInvoiceItemEntity::class
     ],
-    version = 4,
+    version = 5,
     exportSchema = false
 )
 abstract class HesabatyDatabase : RoomDatabase() {
@@ -43,6 +45,7 @@ abstract class HesabatyDatabase : RoomDatabase() {
     abstract fun systemDao(): SystemDao
     abstract fun deviceTrialDao(): DeviceTrialDao
     abstract fun productDao(): ProductDao
+    abstract fun purchaseInvoiceDao(): PurchaseInvoiceDao
 
     companion object {
         private const val DB_NAME = "hesabaty_accounting_v1.db"
@@ -128,6 +131,58 @@ abstract class HesabatyDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * Non-destructive migration adding Purchases & Purchase Invoices tables.
+         */
+        val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `purchase_invoices` (
+                        `id` TEXT NOT NULL,
+                        `tenantId` TEXT NOT NULL,
+                        `supplierId` TEXT NOT NULL,
+                        `invoiceNumber` TEXT NOT NULL,
+                        `purchaseType` TEXT NOT NULL,
+                        `paymentMethod` TEXT NOT NULL,
+                        `totalPiasters` INTEGER NOT NULL,
+                        `paidPiasters` INTEGER NOT NULL,
+                        `remainingPiasters` INTEGER NOT NULL,
+                        `dueDateMillis` INTEGER,
+                        `notes` TEXT NOT NULL DEFAULT '',
+                        `status` TEXT NOT NULL,
+                        `idempotencyKey` TEXT NOT NULL,
+                        `createdByUserId` TEXT NOT NULL,
+                        `createdAt` INTEGER NOT NULL,
+                        PRIMARY KEY(`id`)
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_purchase_invoices_tenantId` ON `purchase_invoices` (`tenantId`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_purchase_invoices_tenantId_supplierId` ON `purchase_invoices` (`tenantId`, `supplierId`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_purchase_invoices_tenantId_createdAt` ON `purchase_invoices` (`tenantId`, `createdAt`)")
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_purchase_invoices_tenantId_idempotencyKey` ON `purchase_invoices` (`tenantId`, `idempotencyKey`)")
+
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `purchase_invoice_items` (
+                        `id` TEXT NOT NULL,
+                        `tenantId` TEXT NOT NULL,
+                        `purchaseInvoiceId` TEXT NOT NULL,
+                        `description` TEXT NOT NULL,
+                        `unitPricePiasters` INTEGER NOT NULL,
+                        `quantityMilli` INTEGER NOT NULL,
+                        `lineTotalPiasters` INTEGER NOT NULL,
+                        `sortOrder` INTEGER NOT NULL DEFAULT 0,
+                        PRIMARY KEY(`id`)
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_purchase_invoice_items_tenantId` ON `purchase_invoice_items` (`tenantId`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_purchase_invoice_items_purchaseInvoiceId` ON `purchase_invoice_items` (`purchaseInvoiceId`)")
+            }
+        }
+
         @Volatile
         private var INSTANCE: HesabatyDatabase? = null
 
@@ -138,7 +193,7 @@ abstract class HesabatyDatabase : RoomDatabase() {
                     HesabatyDatabase::class.java,
                     DB_NAME
                 )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
                     .setJournalMode(JournalMode.WRITE_AHEAD_LOGGING)
                     .build()
                     .also { INSTANCE = it }

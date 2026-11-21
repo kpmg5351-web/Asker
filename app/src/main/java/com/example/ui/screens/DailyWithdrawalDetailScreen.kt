@@ -149,12 +149,15 @@ fun DailyWithdrawalDetailScreen(
             totalPiasters = d.totalPiasters,
             paidPiasters = d.paidPiasters,
             remainingPiasters = d.remainingPiasters,
-            signatureName = settings?.invoiceSignatureName.orEmpty()
+            signatureName = settings?.invoiceSignatureName.orEmpty(),
+            recipientPrefix = "السيد /",
+            recipientPhone = customer?.phone.orEmpty()
         )
     }
 
     fun buildDailyWhatsAppCaption(): String {
         val d = currentDaily ?: return ""
+        val printModel = buildDailyPrintModel()
         return WhatsAppHelper.buildCustomerInvoiceMessage(
             customerName = customer?.name ?: "عميلنا العزيز",
             shopName = tenant?.shopName ?: "المحل",
@@ -163,7 +166,8 @@ fun DailyWithdrawalDetailScreen(
             totalPiasters = d.totalPiasters,
             paidPiasters = d.paidPiasters,
             remainingPiasters = d.remainingPiasters,
-            invoiceTypeLabel = "فاتورة السحب اليومي"
+            invoiceTypeLabel = "فاتورة السحب اليومي",
+            lines = printModel?.lines ?: emptyList()
         )
     }
 

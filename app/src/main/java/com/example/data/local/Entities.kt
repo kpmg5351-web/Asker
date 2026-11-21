@@ -60,6 +60,15 @@ object InvoiceStatuses {
     const val UNPAID = "UNPAID"
     const val OVERDUE = "OVERDUE"
     const val CANCELLED = "CANCELLED"
+
+    fun arabicLabel(status: String): String = when (status) {
+        PAID -> "مدفوعة"
+        PARTIAL -> "مدفوعة جزئيًا"
+        UNPAID -> "غير مدفوعة"
+        OVERDUE -> "متأخرة"
+        CANCELLED -> "ملغاة"
+        else -> status
+    }
 }
 
 object InstallmentStatuses {
@@ -84,9 +93,21 @@ object DailyInvoiceStatuses {
     const val CLOSED = "CLOSED"
 }
 
+object PurchaseTypes {
+    const val CASH = "CASH"
+    const val CREDIT = "CREDIT"
+
+    fun arabicLabel(type: String): String = when (type) {
+        CASH -> "شراء كاش"
+        CREDIT -> "شراء آجل"
+        else -> "فاتورة شراء"
+    }
+}
+
 object SupplierTxTypes {
     const val OPENING_BALANCE = "OPENING_BALANCE"
     const val DEBT_ADD = "DEBT_ADD"
+    const val PURCHASE_INVOICE = "PURCHASE_INVOICE"
     const val PAYMENT_PARTIAL = "PAYMENT_PARTIAL"
     const val PAYMENT_FULL = "PAYMENT_FULL"
     const val ADJUSTMENT = "ADJUSTMENT"
@@ -94,6 +115,7 @@ object SupplierTxTypes {
     fun arabicLabel(type: String): String = when (type) {
         OPENING_BALANCE -> "رصيد افتتاحي"
         DEBT_ADD -> "إضافة مديونية / مشتريات"
+        PURCHASE_INVOICE -> "فاتورة شراء"
         PAYMENT_PARTIAL -> "دفعة جزئية لمورد"
         PAYMENT_FULL -> "دفعة كاملة لمورد"
         ADJUSTMENT -> "تسوية / تعديل مراجع"
@@ -529,4 +551,50 @@ data class ProductEntity(
     val isActive: Boolean = true,
     val createdAt: Long,
     val updatedAt: Long
+)
+
+// 18. PurchaseInvoices
+@JsonClass(generateAdapter = true)
+@Entity(
+    tableName = "purchase_invoices",
+    indices = [
+        Index(value = ["tenantId"]),
+        Index(value = ["tenantId", "supplierId"]),
+        Index(value = ["tenantId", "createdAt"]),
+        Index(value = ["tenantId", "idempotencyKey"], unique = true)
+    ]
+)
+data class PurchaseInvoiceEntity(
+    @PrimaryKey val id: String,
+    val tenantId: String,
+    val supplierId: String,
+    val invoiceNumber: String,
+    val purchaseType: String, // CASH, CREDIT
+    val paymentMethod: String, // CASH, EWALLET, BANK_TRANSFER, NONE
+    val totalPiasters: Long,
+    val paidPiasters: Long,
+    val remainingPiasters: Long,
+    val dueDateMillis: Long? = null,
+    val notes: String = "",
+    val status: String, // PAID, PARTIAL, UNPAID
+    val idempotencyKey: String,
+    val createdByUserId: String,
+    val createdAt: Long
+)
+
+// 19. PurchaseInvoiceItems
+@JsonClass(generateAdapter = true)
+@Entity(
+    tableName = "purchase_invoice_items",
+    indices = [Index(value = ["tenantId"]), Index(value = ["purchaseInvoiceId"])]
+)
+data class PurchaseInvoiceItemEntity(
+    @PrimaryKey val id: String,
+    val tenantId: String,
+    val purchaseInvoiceId: String,
+    val description: String,
+    val unitPricePiasters: Long,
+    val quantityMilli: Long, // 1000 = 1.000
+    val lineTotalPiasters: Long,
+    val sortOrder: Int = 0
 )

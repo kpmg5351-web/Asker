@@ -103,7 +103,7 @@ fun ReportsScreen(
         topBar = {
             HesabatyTopBar(
                 title = "التقارير المالية",
-                subtitle = "ملخص حسابات المحل و13 تقريرًا تفصيليًا في قسم مستقل",
+                subtitle = "ملخص حسابات المحل و${ReportType.entries.size} تقريرًا تفصيليًا في قسم مستقل",
                 onBack = onBack
             )
         }
@@ -123,7 +123,7 @@ fun ReportsScreen(
                 Tab(
                     selected = selectedTab == 1,
                     onClick = { selectedTab = 1 },
-                    text = { Text("التقارير التفصيلية (13)") },
+                    text = { Text("التقارير التفصيلية (${ReportType.entries.size})") },
                     modifier = Modifier.testTag("reports_tab_detailed")
                 )
             }
@@ -266,7 +266,7 @@ fun ReportsScreen(
                         ) {
                             Icon(Icons.Default.Assessment, contentDescription = null, modifier = Modifier.size(18.dp))
                             Spacer(modifier = Modifier.width(8.dp))
-                            Text("فتح التقارير التفصيلية (13 تقريرًا)", fontWeight = FontWeight.Bold)
+                            Text("فتح التقارير التفصيلية (${ReportType.entries.size} تقريرًا)", fontWeight = FontWeight.Bold)
                         }
                     }
                 } else {

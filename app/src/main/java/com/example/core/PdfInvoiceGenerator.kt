@@ -45,7 +45,10 @@ object PdfInvoiceGenerator {
         val paidPiasters: Long,
         val remainingPiasters: Long,
         val notes: String = "",
-        val signatureName: String = ""
+        val signatureName: String = "",
+        val recipientPrefix: String = "السيد /",
+        val recipientPhone: String = "",
+        val dueDateFormatted: String? = null
     )
 
     data class ReportPrintModel(
@@ -69,9 +72,98 @@ object PdfInvoiceGenerator {
         return File(context.cacheDir, "exports").apply { mkdirs() }
     }
 
+    private fun wrapTextLines(text: String, paint: Paint, maxWidth: Float): List<String> {
+        val cleaned = text.trim()
+        if (cleaned.isEmpty() || maxWidth <= 10f) return listOf("")
+        val result = mutableListOf<String>()
+        cleaned.split("\n").forEach { paragraph ->
+            var remaining = paragraph.trim()
+            if (remaining.isEmpty()) {
+                result.add("")
+            } else {
+                while (remaining.isNotEmpty()) {
+                    val count = paint.breakText(remaining, true, maxWidth, null)
+                    if (count <= 0) break
+                    if (count >= remaining.length) {
+                        result.add(remaining)
+                        break
+                    }
+                    // Prefer breaking on whitespace near the end so Arabic words stay intact
+                    val slice = remaining.substring(0, count)
+                    val lastSpace = slice.lastIndexOf(' ')
+                    val splitAt = if (lastSpace > count / 2) lastSpace else count
+                    result.add(remaining.substring(0, splitAt).trimEnd())
+                    remaining = remaining.substring(splitAt).trimStart()
+                }
+            }
+        }
+        return if (result.isEmpty()) listOf("") else result
+    }
+
+    private fun computeInvoiceLayout(context: Context, model: InvoicePrintModel, width: Float): InvoiceLayoutMetrics {
+        val cairo = loadCairoTypeface(context)
+        val margin = 24f
+        val contentWidth = width - margin * 2
+        val colPiasterW = 48f
+        val colPoundW = 80f
+        val colQtyW = 76f
+        val colPriceW = 84f
+        val colDescW = contentWidth - (colPiasterW + colPoundW + colQtyW + colPriceW)
+
+        val regularRight = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            typeface = cairo
+            textSize = 11.2f
+        }
+        val lineDescWrapped = model.lines.map { row ->
+            val descText = buildString {
+                if (!row.timeLabel.isNullOrBlank()) append("[${row.timeLabel}] ")
+                append(row.description.ifBlank { "بضاعة / مبيعات" })
+            }
+            wrapTextLines(descText, regularRight, (colDescW - 18f).coerceAtLeast(80f))
+        }
+        val rowHeights = lineDescWrapped.map { lines ->
+            maxOf(32f, lines.size * 16.5f + 15f)
+        }
+        val extraCustomerLines = (if (model.recipientPhone.isNotBlank()) 1 else 0) +
+            (if (!model.dueDateFormatted.isNullOrBlank()) 1 else 0)
+        val customerBoxH = 66f + extraCustomerLines * 18f
+        val notesWrapped = if (model.notes.isNotBlank()) {
+            wrapTextLines("ملاحظات: ${model.notes}", regularRight, contentWidth - 16f)
+        } else emptyList()
+        val notesH = if (notesWrapped.isNotEmpty()) notesWrapped.size * 18f + 8f else 0f
+        val signatureH = if (model.signatureName.isNotBlank()) 24f else 0f
+
+        val headerH = 96f
+        val tableHeaderH = 34f
+        val totalRowsH = rowHeights.sum()
+        val qtyStripH = 38f
+        val metricBoxesAndWordsH = 62f + 14f + 32f + 16f
+        val footerH = 74f
+
+        val computedHeight = margin + headerH + 14f + customerBoxH + 14f + tableHeaderH +
+            totalRowsH + 8f + qtyStripH + metricBoxesAndWordsH + notesH + signatureH + footerH + margin
+
+        return InvoiceLayoutMetrics(
+            customerBoxH = customerBoxH,
+            lineDescWrapped = lineDescWrapped,
+            rowHeights = rowHeights,
+            notesWrapped = notesWrapped,
+            totalHeight = computedHeight
+        )
+    }
+
+    private data class InvoiceLayoutMetrics(
+        val customerBoxH: Float,
+        val lineDescWrapped: List<List<String>>,
+        val rowHeights: List<Float>,
+        val notesWrapped: List<String>,
+        val totalHeight: Float
+    )
+
     fun generateInvoicePdf(context: Context, model: InvoicePrintModel): Pair<File, Uri> {
         val pageWidth = 595
-        val estimatedHeight = (380 + model.lines.size * 34 + 250).coerceAtLeast(842)
+        val layout = computeInvoiceLayout(context, model, pageWidth.toFloat())
+        val estimatedHeight = layout.totalHeight.toInt().coerceAtLeast(842)
         val safeNum = model.invoiceNumber.replace(Regex("[^A-Za-z0-9_-]"), "_")
         val outFile = File(exportsDir(context), "invoice_${safeNum}_${System.currentTimeMillis()}.pdf")
 
@@ -80,7 +172,7 @@ object PdfInvoiceGenerator {
             document = PdfDocument()
             val pageInfo = PdfDocument.PageInfo.Builder(pageWidth, estimatedHeight, 1).create()
             val page = document.startPage(pageInfo)
-            drawInvoiceOnCanvas(context, page.canvas, pageWidth.toFloat(), estimatedHeight.toFloat(), model)
+            drawInvoiceOnCanvas(context, page.canvas, pageWidth.toFloat(), estimatedHeight.toFloat(), model, layout)
             document.finishPage(page)
             FileOutputStream(outFile).use { document.writeTo(it) }
         } catch (_: IllegalStateException) {
@@ -115,12 +207,12 @@ object PdfInvoiceGenerator {
 
     /**
      * Generates a high-resolution (900px wide) royal-blue commercial invoice PNG image
-     * suitable for WhatsApp sharing with crystal-clear Arabic typography.
+     * suitable for WhatsApp sharing with crystal-clear Arabic typography and zero truncation.
      */
     fun generateInvoicePng(context: Context, model: InvoicePrintModel): Pair<File, Uri> {
         val logicalWidth = 595f
-        val extraNotesH = (if (model.notes.isNotBlank()) 28 else 0) + (if (model.signatureName.isNotBlank()) 26 else 0)
-        val logicalHeight = (430 + model.lines.size * 34 + extraNotesH + 170).coerceAtLeast(740).toFloat()
+        val layout = computeInvoiceLayout(context, model, logicalWidth)
+        val logicalHeight = layout.totalHeight.coerceAtLeast(760f)
 
         val widthPx = 900
         val scale = widthPx / logicalWidth
@@ -131,7 +223,7 @@ object PdfInvoiceGenerator {
         canvas.drawColor(Color.WHITE)
         canvas.save()
         canvas.scale(scale, scale)
-        drawInvoiceOnCanvas(context, canvas, logicalWidth, logicalHeight, model)
+        drawInvoiceOnCanvas(context, canvas, logicalWidth, logicalHeight, model, layout)
         canvas.restore()
 
         val safeNum = model.invoiceNumber.replace(Regex("[^A-Za-z0-9_-]"), "_")
@@ -159,7 +251,7 @@ object PdfInvoiceGenerator {
         statusRemainingPiasters: Long? = null,
         footerNote: String = "شكرًا لتعاملكم وثقتكم الغالية — نسعد دائمًا بخدمتكم"
     ): Pair<File, Uri> {
-        val maxRows = 24
+        val maxRows = 60
         val displayRows = model.rows.take(maxRows)
         val hiddenRowsCount = (model.rows.size - displayRows.size).coerceAtLeast(0)
 
@@ -168,7 +260,7 @@ object PdfInvoiceGenerator {
         val summaryCardRows = ((model.summaryPairs.size + 2) / 3).coerceAtLeast(1)
         val summarySectionH = if (model.summaryPairs.isNotEmpty()) summaryCardRows * 64f + 16f else 0f
         val tableHeaderH = if (model.columns.isNotEmpty()) 34f else 0f
-        val tableRowsH = if (displayRows.isEmpty()) 48f else displayRows.size * 30f
+        val tableRowsH = if (displayRows.isEmpty()) 48f else displayRows.size * 34f
         val truncationNoticeH = if (hiddenRowsCount > 0) 28f else 0f
         val footerH = 92f
 
@@ -215,7 +307,8 @@ object PdfInvoiceGenerator {
         canvas: Canvas,
         width: Float,
         height: Float,
-        model: InvoicePrintModel
+        model: InvoicePrintModel,
+        layout: InvoiceLayoutMetrics
     ) {
         val cairo = loadCairoTypeface(context)
         val royalDark = Color.parseColor("#0D47A1")
@@ -339,14 +432,23 @@ object PdfInvoiceGenerator {
             textSize = 10f
         })
 
-        // Customer & Status Card
+        // Customer / Supplier & Status Card
         var y = headerBottom + 14f
+        val customerBoxH = layout.customerBoxH
         fillPaint.color = Color.parseColor("#F8FAFC")
-        canvas.drawRoundRect(margin, y, width - margin, y + 66f, 10f, 10f, fillPaint)
-        canvas.drawRoundRect(margin, y, width - margin, y + 66f, 10f, 10f, strokePaint)
+        canvas.drawRoundRect(margin, y, width - margin, y + customerBoxH, 10f, 10f, fillPaint)
+        canvas.drawRoundRect(margin, y, width - margin, y + customerBoxH, 10f, 10f, strokePaint)
 
-        canvas.drawText("السيد / ${model.customerName.take(30)}", width - margin - 14f, y + 26f, boldRight)
-        canvas.drawText("طريقة الدفع: ${model.paymentMethodLabel}   •   العملة: جنيه مصري", width - margin - 14f, y + 49f, mutedRight)
+        canvas.drawText("${model.recipientPrefix} ${model.customerName.take(40)}", width - margin - 14f, y + 25f, boldRight)
+        canvas.drawText("طريقة الدفع: ${model.paymentMethodLabel}   •   العملة: جنيه مصري", width - margin - 14f, y + 47f, mutedRight)
+        var metaY = y + 66f
+        if (model.recipientPhone.isNotBlank()) {
+            canvas.drawText("هاتف: ${model.recipientPhone}", width - margin - 14f, metaY, mutedRight)
+            metaY += 18f
+        }
+        if (!model.dueDateFormatted.isNullOrBlank()) {
+            canvas.drawText("تاريخ الاستحقاق: ${model.dueDateFormatted}", width - margin - 14f, metaY, mutedRight)
+        }
 
         // Official Paid / Remaining Status Stamp Pill on Left
         val isPaidFull = model.remainingPiasters <= 0L
@@ -354,30 +456,31 @@ object PdfInvoiceGenerator {
         val pillFg = if (isPaidFull) greenColor else redColor
         val pillLabel = if (isPaidFull) "✓ خالصة بالكامل" else "متبقي ${MoneyFormatter.formatEgp(model.remainingPiasters)}"
 
+        val pillTop = y + (customerBoxH - 32f) / 2f
         fillPaint.color = pillBg
-        canvas.drawRoundRect(margin + 12f, y + 17f, margin + 168f, y + 49f, 16f, 16f, fillPaint)
+        canvas.drawRoundRect(margin + 12f, pillTop, margin + 174f, pillTop + 32f, 16f, 16f, fillPaint)
         val pillStroke = Paint(strokePaint).apply { color = pillFg; strokeWidth = 1f }
-        canvas.drawRoundRect(margin + 12f, y + 17f, margin + 168f, y + 49f, 16f, 16f, pillStroke)
+        canvas.drawRoundRect(margin + 12f, pillTop, margin + 174f, pillTop + 32f, 16f, 16f, pillStroke)
         canvas.drawText(
-            pillLabel.take(22),
-            margin + 90f,
-            y + 37f,
+            pillLabel.take(26),
+            margin + 93f,
+            pillTop + 20f,
             Paint(centerBold).apply { color = pillFg; textSize = 10.5f }
         )
 
         // Paper-style RTL Table Columns (Right to Left):
-        // [البيان (wide)] | [السعر] | [العدد] | [جنيه] | [قرش]
-        y += 80f
-        val colPiasterW = 50f
-        val colPoundW = 84f
-        val colQtyW = 62f
-        val colPriceW = 86f
+        // [البيان (wide)] | [السعر] | [العدد/الكمية] | [جنيه] | [قرش]
+        y += customerBoxH + 14f
+        val colPiasterW = 48f
+        val colPoundW = 80f
+        val colQtyW = 76f
+        val colPriceW = 84f
         val colDescW = contentWidth - (colPiasterW + colPoundW + colQtyW + colPriceW)
 
         val x0 = margin
         val x1 = x0 + colPiasterW // قرش
         val x2 = x1 + colPoundW   // جنيه
-        val x3 = x2 + colQtyW     // العدد
+        val x3 = x2 + colQtyW     // العدد/الكمية
         val x4 = x3 + colPriceW   // السعر
         val x5 = x4 + colDescW    // البيان
 
@@ -388,7 +491,7 @@ object PdfInvoiceGenerator {
 
         canvas.drawText("قرش", (x0 + x1) / 2f, y + 22f, centerBold)
         canvas.drawText("جنيه", (x1 + x2) / 2f, y + 22f, centerBold)
-        canvas.drawText("العدد", (x2 + x3) / 2f, y + 22f, centerBold)
+        canvas.drawText("العدد/الكمية", (x2 + x3) / 2f, y + 22f, Paint(centerBold).apply { textSize = 10.2f })
         canvas.drawText("السعر", (x3 + x4) / 2f, y + 22f, centerBold)
         canvas.drawText("البيان", (x4 + x5) / 2f, y + 22f, centerBold)
 
@@ -397,8 +500,9 @@ object PdfInvoiceGenerator {
         }
         y += headerHeight
 
-        val rowHeight = 32f
         model.lines.forEachIndexed { idx, row ->
+            val descLines = layout.lineDescWrapped.getOrElse(idx) { listOf(row.description.ifBlank { "بضاعة / مبيعات" }) }
+            val rowHeight = layout.rowHeights.getOrElse(idx) { 32f }
             if (idx % 2 == 1) {
                 fillPaint.color = Color.parseColor("#F8FBFF")
                 canvas.drawRect(x0, y, x5, y + rowHeight, fillPaint)
@@ -408,27 +512,47 @@ object PdfInvoiceGenerator {
                 canvas.drawLine(cx, y, cx, y + rowHeight, strokePaint)
             }
 
+            val midY = y + rowHeight / 2f + 4f
             val (pounds, piasters) = MoneyFormatter.splitPoundsAndPiasters(row.lineTotalPiasters)
-            canvas.drawText(String.format("%02d", piasters), (x0 + x1) / 2f, y + 20f, centerRegular)
+            canvas.drawText(String.format("%02d", piasters), (x0 + x1) / 2f, midY, centerRegular)
             canvas.drawText(
                 MoneyFormatter.formatEgp(pounds * 100L, ""),
                 (x1 + x2) / 2f,
-                y + 20f,
+                midY,
                 Paint(centerRegular).apply { typeface = Typeface.create(cairo, Typeface.BOLD) }
             )
-            canvas.drawText(MoneyFormatter.formatQuantity(row.quantityMilli), (x2 + x3) / 2f, y + 20f, centerRegular)
-            canvas.drawText(MoneyFormatter.formatEgp(row.unitPricePiasters, ""), (x3 + x4) / 2f, y + 20f, centerRegular)
+            canvas.drawText(
+                MoneyFormatter.formatQuantity(row.quantityMilli),
+                (x2 + x3) / 2f,
+                midY,
+                Paint(centerRegular).apply { typeface = Typeface.create(cairo, Typeface.BOLD) }
+            )
+            canvas.drawText(MoneyFormatter.formatEgp(row.unitPricePiasters, ""), (x3 + x4) / 2f, midY, centerRegular)
 
-            val descText = buildString {
-                if (!row.timeLabel.isNullOrBlank()) append("[${row.timeLabel}] ")
-                append(row.description.ifBlank { "بضاعة / مبيعات" })
-            }.take(36)
-            canvas.drawText(descText, x5 - 10f, y + 20f, regularRight)
+            // Draw full wrapped Arabic description lines (zero truncation)
+            var textY = y + 20f
+            descLines.forEach { dLine ->
+                canvas.drawText(dLine, x5 - 9f, textY, regularRight)
+                textY += 16.5f
+            }
             y += rowHeight
         }
 
+        // Quantity & Line Count Summary Strip directly below table
+        val totalQtyMilli = model.lines.sumOf { it.quantityMilli }
+        y += 8f
+        fillPaint.color = blueSoftBg
+        canvas.drawRoundRect(margin, y, width - margin, y + 28f, 8f, 8f, fillPaint)
+        canvas.drawRoundRect(margin, y, width - margin, y + 28f, 8f, 8f, strokePaint)
+        canvas.drawText(
+            "عدد البنود: ${model.lines.size}   •   إجمالي العدد / الكمية: ${MoneyFormatter.formatQuantity(totalQtyMilli)}",
+            width / 2f,
+            y + 18f,
+            Paint(centerBold).apply { color = royalDark; textSize = 11f }
+        )
+        y += 38f
+
         // Totals Summary 3-Card Strip (RTL: Right = الإجمالي, Center = المدفوع, Left = المتبقي)
-        y += 16f
         val gap = 10f
         val boxW = (contentWidth - gap * 2) / 3f
         val boxH = 62f
@@ -486,9 +610,12 @@ object PdfInvoiceGenerator {
         )
 
         y += 48f
-        if (model.notes.isNotBlank()) {
-            canvas.drawText("ملاحظات: ${model.notes.take(70)}", width - margin, y, regularRight)
-            y += 22f
+        if (layout.notesWrapped.isNotEmpty()) {
+            layout.notesWrapped.forEach { nLine ->
+                canvas.drawText(nLine, width - margin, y, regularRight)
+                y += 18f
+            }
+            y += 6f
         }
         if (model.signatureName.isNotBlank()) {
             canvas.drawText("توقيع المسؤول: ${model.signatureName}", width - margin, y, boldRight)
@@ -743,7 +870,7 @@ object PdfInvoiceGenerator {
                 )
                 y += 40f
             } else {
-                val rowH = 29f
+                val rowH = 34f
                 displayRows.forEachIndexed { rIdx, row ->
                     if (rIdx % 2 == 1) {
                         fillPaint.color = Color.parseColor("#F8FBFF")
@@ -757,7 +884,14 @@ object PdfInvoiceGenerator {
                     row.forEachIndexed { cIdx, cellVal ->
                         if (cIdx < colCount) {
                             val cx = width - margin - colW * cIdx - colW / 2f
-                            canvas.drawText(cellVal.take(20), cx, y + 19f, cellPaint)
+                            val wrapped = wrapTextLines(cellVal, cellPaint, (colW - 8f).coerceAtLeast(36f))
+                            if (wrapped.size <= 1) {
+                                canvas.drawText(wrapped.firstOrNull().orEmpty(), cx, y + 21f, cellPaint)
+                            } else {
+                                val smallCellPaint = Paint(cellPaint).apply { textSize = 9.0f }
+                                canvas.drawText(wrapped[0], cx, y + 14f, smallCellPaint)
+                                canvas.drawText(wrapped[1], cx, y + 26f, smallCellPaint)
+                            }
                         }
                     }
                     y += rowH

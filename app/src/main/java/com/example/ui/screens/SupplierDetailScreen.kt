@@ -51,13 +51,16 @@ import com.example.core.EgyptTime
 import com.example.core.MoneyFormatter
 import com.example.core.PdfInvoiceGenerator
 import com.example.core.WhatsAppHelper
+import com.example.data.local.InvoiceStatuses
 import com.example.data.local.PaymentMethods
+import com.example.data.local.PurchaseTypes
 import com.example.data.local.SupplierTransactionEntity
 import com.example.data.local.SupplierTxTypes
 import com.example.ui.components.EmptyStateView
 import com.example.ui.components.HesabatyCard
 import com.example.ui.components.HesabatyTopBar
 import com.example.ui.components.SectionHeader
+import com.example.ui.components.StatusBadge
 import com.example.ui.components.SummaryStatPill
 import com.example.ui.theme.HesabatyThemeExtras
 import com.example.ui.viewmodel.HesabatyViewModel
@@ -67,12 +70,16 @@ import java.util.UUID
 fun SupplierDetailScreen(
     supplierId: String,
     viewModel: HesabatyViewModel,
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    onCreatePurchase: () -> Unit = {},
+    onOpenPurchaseInvoice: (String) -> Unit = {}
 ) {
     val context = LocalContext.current
     val supplier by remember(supplierId) { viewModel.observeSupplier(supplierId) }
         .collectAsStateWithLifecycle(initialValue = null)
     val transactions by remember(supplierId) { viewModel.observeSupplierTransactions(supplierId) }
+        .collectAsStateWithLifecycle(initialValue = emptyList())
+    val supplierPurchases by remember(supplierId) { viewModel.observeSupplierPurchaseInvoices(supplierId) }
         .collectAsStateWithLifecycle(initialValue = emptyList())
     val tenant by viewModel.activeTenant.collectAsStateWithLifecycle()
     val settings by viewModel.appSettings.collectAsStateWithLifecycle()
@@ -294,6 +301,18 @@ fun SupplierDetailScreen(
                 }
                 Spacer(modifier = Modifier.height(8.dp))
                 Button(
+                    onClick = onCreatePurchase,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(48.dp)
+                        .testTag("supplier_new_purchase_btn")
+                ) {
+                    Icon(Icons.Default.Receipt, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("فاتورة شراء جديدة من هذا المورد", fontWeight = FontWeight.Bold)
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+                Button(
                     onClick = { shareSupplierStatementImageViaWhatsApp() },
                     colors = ButtonDefaults.buttonColors(containerColor = extras.success),
                     modifier = Modifier.fillMaxWidth().height(46.dp).testTag("supplier_whatsapp_statement_btn")
@@ -301,6 +320,65 @@ fun SupplierDetailScreen(
                     Icon(Icons.AutoMirrored.Filled.Send, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(modifier = Modifier.width(8.dp))
                     Text("إرسال كشف حساب المورد عبر واتساب (صورة فاتورة)", fontWeight = FontWeight.Bold)
+                }
+            }
+
+            if (supplierPurchases.isNotEmpty()) {
+                item {
+                    SectionHeader(title = "فواتير الشراء (${supplierPurchases.size} فاتورة)")
+                }
+                items(supplierPurchases, key = { "pur_${it.id}" }) { inv ->
+                    val (stColor, stBg) = when (inv.status) {
+                        InvoiceStatuses.PAID -> extras.success to extras.successContainer
+                        InvoiceStatuses.PARTIAL -> extras.warning to extras.warningContainer
+                        else -> extras.danger to extras.dangerContainer
+                    }
+                    HesabatyCard(
+                        onClick = { onOpenPurchaseInvoice(inv.id) },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("supplier_purchase_card_${inv.id}")
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "${inv.invoiceNumber}  •  ${PurchaseTypes.arabicLabel(inv.purchaseType)}",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text(
+                                    text = EgyptTime.formatDateTime(inv.createdAt),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Text(
+                                    text = "الإجمالي: ${MoneyFormatter.formatEgp(inv.totalPiasters, currency)} • المدفوع: ${MoneyFormatter.formatEgp(inv.paidPiasters, currency)}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Column(horizontalAlignment = Alignment.End) {
+                                StatusBadge(
+                                    label = InvoiceStatuses.arabicLabel(inv.status),
+                                    textColor = stColor,
+                                    backgroundColor = stBg
+                                )
+                                if (inv.remainingPiasters > 0L) {
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Text(
+                                        text = "متبقي: ${MoneyFormatter.formatEgp(inv.remainingPiasters, currency)}",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = extras.danger,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                }
+                            }
+                        }
+                    }
                 }
             }
 

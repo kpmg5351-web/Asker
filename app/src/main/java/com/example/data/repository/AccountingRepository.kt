@@ -21,6 +21,9 @@ import com.example.data.local.InvoiceStatuses
 import com.example.data.local.PaymentEntity
 import com.example.data.local.PaymentMethods
 import com.example.data.local.ProductEntity
+import com.example.data.local.PurchaseInvoiceEntity
+import com.example.data.local.PurchaseInvoiceItemEntity
+import com.example.data.local.PurchaseTypes
 import com.example.data.local.SaleTypes
 import com.example.data.local.SalesInvoiceEntity
 import com.example.data.local.SalesInvoiceItemEntity
@@ -38,6 +41,16 @@ sealed class RepoResult<out T> {
 }
 
 data class SaleLineDraft(
+    val description: String,
+    val unitPricePiasters: Long,
+    val quantityMilli: Long = 1000L,
+    val productId: String? = null
+) {
+    val lineTotalPiasters: Long
+        get() = MoneyFormatter.calculateLineTotalPiasters(unitPricePiasters, quantityMilli)
+}
+
+data class PurchaseLineDraft(
     val description: String,
     val unitPricePiasters: Long,
     val quantityMilli: Long = 1000L,
@@ -96,7 +109,8 @@ enum class ReportType(val titleAr: String) {
     CUSTOMER_ACCOUNTS("تقرير حسابات العملاء"),
     SUPPLIER_ACCOUNTS("تقرير حسابات الموردين"),
     DAILY_WITHDRAWALS("تقرير السحوبات اليومية"),
-    INVOICES_OPEN_CLOSED("تقرير الفواتير المفتوحة والمغلقة")
+    INVOICES_OPEN_CLOSED("تقرير الفواتير المفتوحة والمغلقة"),
+    PURCHASES("تقرير المشتريات وفواتير الشراء")
 }
 
 data class ReportOutput(
@@ -118,6 +132,7 @@ class AccountingRepository(private val db: HesabatyDatabase) {
     private val installmentDao = db.installmentDao()
     private val systemDao = db.systemDao()
     private val productDao = db.productDao()
+    private val purchaseInvoiceDao = db.purchaseInvoiceDao()
 
     // =========================================================================
     // Reactive Flows (Strictly Tenant-Isolated)
@@ -133,6 +148,10 @@ class AccountingRepository(private val db: HesabatyDatabase) {
     fun observeSuppliers(tenantId: String): Flow<List<SupplierEntity>> = supplierDao.observeSuppliers(tenantId)
     fun observeSupplier(tenantId: String, supplierId: String): Flow<SupplierEntity?> = supplierDao.observeSupplier(tenantId, supplierId)
     fun observeSupplierTransactions(tenantId: String, supplierId: String) = transactionDao.observeSupplierTransactions(tenantId, supplierId)
+    fun observePurchaseInvoices(tenantId: String) = purchaseInvoiceDao.observePurchaseInvoices(tenantId)
+    fun observeSupplierPurchaseInvoices(tenantId: String, supplierId: String) = purchaseInvoiceDao.observeSupplierPurchaseInvoices(tenantId, supplierId)
+    fun observePurchaseInvoiceById(tenantId: String, purchaseId: String) = purchaseInvoiceDao.observePurchaseInvoiceById(tenantId, purchaseId)
+    fun observePurchaseInvoiceItems(tenantId: String, purchaseId: String) = purchaseInvoiceDao.observePurchaseInvoiceItems(tenantId, purchaseId)
 
     fun observeInvoices(tenantId: String) = salesInvoiceDao.observeInvoices(tenantId)
     fun observeInvoiceById(tenantId: String, invoiceId: String) = salesInvoiceDao.observeInvoiceById(tenantId, invoiceId)
@@ -495,6 +514,155 @@ class AccountingRepository(private val db: HesabatyDatabase) {
                 updatedAt = EgyptTime.nowMillis()
             )
         )
+    }
+
+    // =========================================================================
+    // Purchase Invoices (Suppliers, Inventory Restocking & Supplier Ledger)
+    // =========================================================================
+
+    suspend fun createPurchaseInvoice(
+        tenantId: String,
+        actor: UserEntity,
+        supplierId: String,
+        lines: List<PurchaseLineDraft>,
+        purchaseType: String,
+        paymentMethod: String,
+        paidNowPiasters: Long,
+        dueDateMillis: Long?,
+        notes: String,
+        occurredAtMillis: Long = EgyptTime.nowMillis(),
+        idempotencyKey: String = UUID.randomUUID().toString()
+    ): RepoResult<PurchaseInvoiceEntity> {
+        if (lines.isEmpty()) return RepoResult.Error("يرجى إدخال صنف أو بند واحد على الأقل")
+        val totalPiasters = lines.sumOf { it.lineTotalPiasters }
+        if (totalPiasters <= 0L) return RepoResult.Error("إجمالي فاتورة الشراء يجب أن يكون أكبر من صفر")
+        if (paidNowPiasters < 0L) return RepoResult.Error("المبلغ المدفوع لا يمكن أن يكون سالبًا")
+        if (paidNowPiasters > totalPiasters) {
+            return RepoResult.Error("المبلغ المدفوع لا يمكن أن يتجاوز إجمالي فاتورة الشراء")
+        }
+
+        val remainingPiasters = totalPiasters - paidNowPiasters
+
+        return db.withTransaction {
+            val dup = purchaseInvoiceDao.getByIdempotencyKey(tenantId, idempotencyKey)
+            if (dup != null) return@withTransaction RepoResult.Success(dup)
+
+            val supplier = supplierDao.getSupplierById(tenantId, supplierId)
+                ?: return@withTransaction RepoResult.Error("المورد غير موجود")
+
+            val seq = purchaseInvoiceDao.countPurchaseInvoices(tenantId) + 1
+            val invoiceNumber = "PUR-${seq.toString().padStart(5, '0')}"
+            val purchaseId = UUID.randomUUID().toString()
+
+            val status = when {
+                remainingPiasters == 0L -> InvoiceStatuses.PAID
+                paidNowPiasters > 0L -> InvoiceStatuses.PARTIAL
+                else -> InvoiceStatuses.UNPAID
+            }
+
+            val invoice = PurchaseInvoiceEntity(
+                id = purchaseId,
+                tenantId = tenantId,
+                supplierId = supplierId,
+                invoiceNumber = invoiceNumber,
+                purchaseType = purchaseType,
+                paymentMethod = if (paidNowPiasters > 0L) paymentMethod else PaymentMethods.NONE,
+                totalPiasters = totalPiasters,
+                paidPiasters = paidNowPiasters,
+                remainingPiasters = remainingPiasters,
+                dueDateMillis = dueDateMillis,
+                notes = notes.trim(),
+                status = status,
+                idempotencyKey = idempotencyKey,
+                createdByUserId = actor.id,
+                createdAt = occurredAtMillis
+            )
+            purchaseInvoiceDao.upsertPurchaseInvoice(invoice)
+
+            val itemEntities = lines.mapIndexed { index, draft ->
+                PurchaseInvoiceItemEntity(
+                    id = UUID.randomUUID().toString(),
+                    tenantId = tenantId,
+                    purchaseInvoiceId = purchaseId,
+                    description = draft.description.trim().ifBlank { "مشتريات بضاعة" },
+                    unitPricePiasters = draft.unitPricePiasters,
+                    quantityMilli = draft.quantityMilli,
+                    lineTotalPiasters = draft.lineTotalPiasters,
+                    sortOrder = index
+                )
+            }
+            purchaseInvoiceDao.upsertPurchaseInvoiceItems(itemEntities)
+
+            // Automatically restock tracked catalog products & backfill purchase price if empty
+            for (draft in lines) {
+                val pid = draft.productId ?: continue
+                val prod = productDao.getProductById(tenantId, pid) ?: continue
+                if (prod.trackStock || prod.purchasePricePiasters <= 0L) {
+                    val updatedStock = if (prod.trackStock) prod.stockQuantityMilli + draft.quantityMilli else prod.stockQuantityMilli
+                    val updatedBuyPrice = if (prod.purchasePricePiasters <= 0L) draft.unitPricePiasters else prod.purchasePricePiasters
+                    productDao.upsertProduct(
+                        prod.copy(
+                            stockQuantityMilli = updatedStock,
+                            purchasePricePiasters = updatedBuyPrice,
+                            updatedAt = occurredAtMillis
+                        )
+                    )
+                }
+            }
+
+            // Post purchase invoice debt to supplier ledger once
+            transactionDao.upsertSupplierTransaction(
+                SupplierTransactionEntity(
+                    id = UUID.randomUUID().toString(),
+                    tenantId = tenantId,
+                    supplierId = supplierId,
+                    type = SupplierTxTypes.PURCHASE_INVOICE,
+                    amountPiasters = totalPiasters,
+                    signedDeltaPiasters = totalPiasters,
+                    runningBalancePiasters = 0L, // recalculated below
+                    paymentMethod = invoice.paymentMethod,
+                    notes = "فاتورة شراء $invoiceNumber (${PurchaseTypes.arabicLabel(purchaseType)})",
+                    idempotencyKey = "pur_debt_$idempotencyKey",
+                    createdByUserId = actor.id,
+                    createdAt = occurredAtMillis
+                )
+            )
+
+            // Post down-payment / cash payment to supplier ledger if paid now
+            if (paidNowPiasters > 0L) {
+                transactionDao.upsertSupplierTransaction(
+                    SupplierTransactionEntity(
+                        id = UUID.randomUUID().toString(),
+                        tenantId = tenantId,
+                        supplierId = supplierId,
+                        type = if (remainingPiasters == 0L) SupplierTxTypes.PAYMENT_FULL else SupplierTxTypes.PAYMENT_PARTIAL,
+                        amountPiasters = paidNowPiasters,
+                        signedDeltaPiasters = -paidNowPiasters,
+                        runningBalancePiasters = 0L, // recalculated below
+                        paymentMethod = paymentMethod,
+                        notes = if (remainingPiasters == 0L) {
+                            "سداد كامل فاتورة شراء $invoiceNumber"
+                        } else {
+                            "دفعة مقدمة لفاتورة شراء $invoiceNumber"
+                        },
+                        idempotencyKey = "pur_pay_$idempotencyKey",
+                        createdByUserId = actor.id,
+                        createdAt = occurredAtMillis + 1L
+                    )
+                )
+            }
+
+            recalculateSupplierLedger(tenantId, supplierId)
+            recordAudit(
+                tenantId = tenantId,
+                actor = actor,
+                action = "CREATE_PURCHASE",
+                entityType = "PURCHASE_INVOICE",
+                entityId = purchaseId,
+                details = "تسجيل فاتورة شراء $invoiceNumber من المورد ${supplier.name} بإجمالي ${MoneyFormatter.formatEgp(totalPiasters)}"
+            )
+            RepoResult.Success(invoice)
+        }
     }
 
     // =========================================================================
@@ -1657,6 +1825,46 @@ class AccountingRepository(private val db: HesabatyDatabase) {
                             "${d.withdrawalsCount}",
                             MoneyFormatter.formatEgp(d.totalPiasters, ""),
                             if (d.status == DailyInvoiceStatuses.OPEN) "مفتوحة" else "مغلقة"
+                        )
+                    }
+                )
+            }
+
+            ReportType.PURCHASES -> {
+                val purchases = purchaseInvoiceDao.getPurchaseInvoices(tenantId).filter { inv ->
+                    val inRange = inv.createdAt in start..end
+                    val sname = supplierMap[inv.supplierId]?.name?.lowercase().orEmpty()
+                    val matchesQ = q.isEmpty() || sname.contains(q) || inv.invoiceNumber.lowercase().contains(q)
+                    inRange && matchesQ
+                }
+                val purchaseIds = purchases.map { it.id }.toSet()
+                val itemsByPurchase = purchaseInvoiceDao.getAllPurchaseInvoiceItems(tenantId)
+                    .filter { it.purchaseInvoiceId in purchaseIds }
+                    .groupBy { it.purchaseInvoiceId }
+                val sumTotal = purchases.sumOf { it.totalPiasters }
+                val sumPaid = purchases.sumOf { it.paidPiasters }
+                val sumRem = purchases.sumOf { it.remainingPiasters }
+                val totalQty = purchaseIds.sumOf { pid -> itemsByPurchase[pid]?.sumOf { it.quantityMilli } ?: 0L }
+
+                ReportOutput(
+                    type = type,
+                    periodLabel = periodLabel,
+                    summaryPairs = listOf(
+                        "عدد فواتير الشراء" to "${purchases.size}",
+                        "إجمالي العدد / الكمية" to MoneyFormatter.formatQuantity(totalQty),
+                        "إجمالي المشتريات" to MoneyFormatter.formatEgp(sumTotal),
+                        "المدفوع للموردين" to MoneyFormatter.formatEgp(sumPaid),
+                        "المتبقي للموردين" to MoneyFormatter.formatEgp(sumRem)
+                    ),
+                    columns = listOf("الفاتورة", "المورد", "الكمية", "الإجمالي", "المتبقي"),
+                    rows = purchases.map { inv ->
+                        val invQty = itemsByPurchase[inv.id]?.sumOf { it.quantityMilli } ?: 0L
+                        listOf(
+                            inv.invoiceNumber,
+                            supplierMap[inv.supplierId]?.name ?: "—",
+                            MoneyFormatter.formatQuantity(invQty),
+                            MoneyFormatter.formatEgp(inv.totalPiasters, ""),
+                            MoneyFormatter.formatEgp(inv.remainingPiasters, "")
                         )
                     }
                 )

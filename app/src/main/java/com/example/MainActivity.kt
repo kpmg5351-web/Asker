@@ -90,8 +90,11 @@ import com.example.ui.screens.DailyWithdrawalsScreen
 import com.example.ui.screens.DashboardScreen
 import com.example.ui.screens.InvoicePreviewScreen
 import com.example.ui.screens.LoginScreen
+import com.example.ui.screens.NewPurchaseScreen
 import com.example.ui.screens.NewSaleScreen
 import com.example.ui.screens.ProductsScreen
+import com.example.ui.screens.PurchaseInvoicePreviewScreen
+import com.example.ui.screens.PurchasesScreen
 import com.example.ui.screens.ReportsScreen
 import com.example.ui.screens.SettingsScreen
 import com.example.ui.screens.SupplierDetailScreen
@@ -464,7 +467,8 @@ private fun ShopWorkspaceHost(
                             viewModel = viewModel,
                             quickPayBanner = payMode,
                             onBack = { navigateTopTab("dashboard") },
-                            onOpenSupplier = { sid -> navController.navigate("supplier_detail/$sid") }
+                            onOpenSupplier = { sid -> navController.navigate("supplier_detail/$sid") },
+                            onOpenPurchases = { navController.navigate("purchases") }
                         )
                     }
 
@@ -473,7 +477,8 @@ private fun ShopWorkspaceHost(
                             viewModel = viewModel,
                             quickPayBanner = false,
                             onBack = { navigateTopTab("dashboard") },
-                            onOpenSupplier = { sid -> navController.navigate("supplier_detail/$sid") }
+                            onOpenSupplier = { sid -> navController.navigate("supplier_detail/$sid") },
+                            onOpenPurchases = { navController.navigate("purchases") }
                         )
                     }
 
@@ -484,6 +489,59 @@ private fun ShopWorkspaceHost(
                         val sid = entry.arguments?.getString("supplierId").orEmpty()
                         SupplierDetailScreen(
                             supplierId = sid,
+                            viewModel = viewModel,
+                            onBack = { navController.popBackStack() },
+                            onCreatePurchase = { navController.navigate("new_purchase?supplierId=$sid") },
+                            onOpenPurchaseInvoice = { pid -> navController.navigate("purchase_preview/$pid") }
+                        )
+                    }
+
+                    composable("purchases") {
+                        PurchasesScreen(
+                            viewModel = viewModel,
+                            onBack = { navController.popBackStack() },
+                            onCreatePurchase = { navController.navigate("new_purchase") },
+                            onOpenPurchaseInvoice = { pid -> navController.navigate("purchase_preview/$pid") }
+                        )
+                    }
+
+                    composable(
+                        route = "new_purchase?supplierId={supplierId}",
+                        arguments = listOf(navArgument("supplierId") { type = NavType.StringType; nullable = true; defaultValue = null })
+                    ) { entry ->
+                        val sid = entry.arguments?.getString("supplierId")
+                        NewPurchaseScreen(
+                            preselectedSupplierId = sid,
+                            viewModel = viewModel,
+                            onBack = { navController.popBackStack() },
+                            onPurchaseCreated = { purchaseId ->
+                                navController.navigate("purchase_preview/$purchaseId") {
+                                    popUpTo("new_purchase?supplierId={supplierId}") { inclusive = true }
+                                }
+                            }
+                        )
+                    }
+
+                    composable("new_purchase") {
+                        NewPurchaseScreen(
+                            preselectedSupplierId = null,
+                            viewModel = viewModel,
+                            onBack = { navController.popBackStack() },
+                            onPurchaseCreated = { purchaseId ->
+                                navController.navigate("purchase_preview/$purchaseId") {
+                                    popUpTo("new_purchase") { inclusive = true }
+                                }
+                            }
+                        )
+                    }
+
+                    composable(
+                        route = "purchase_preview/{purchaseId}",
+                        arguments = listOf(navArgument("purchaseId") { type = NavType.StringType })
+                    ) { entry ->
+                        val pid = entry.arguments?.getString("purchaseId").orEmpty()
+                        PurchaseInvoicePreviewScreen(
+                            purchaseId = pid,
                             viewModel = viewModel,
                             onBack = { navController.popBackStack() }
                         )

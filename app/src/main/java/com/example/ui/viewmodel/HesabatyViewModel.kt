@@ -17,6 +17,7 @@ import com.example.data.local.CustomerEntity
 import com.example.data.local.DailyWithdrawalInvoiceEntity
 import com.example.data.local.PaymentEntity
 import com.example.data.local.ProductEntity
+import com.example.data.local.PurchaseInvoiceEntity
 import com.example.data.local.SalesInvoiceEntity
 import com.example.data.local.SupplierEntity
 import com.example.data.local.TenantEntity
@@ -27,6 +28,7 @@ import com.example.data.repository.AuthResult
 import com.example.data.repository.CreditLimitBreach
 import com.example.data.repository.DashboardSummary
 import com.example.data.repository.InstallmentDraft
+import com.example.data.repository.PurchaseLineDraft
 import com.example.data.repository.RepoResult
 import com.example.data.repository.ReportOutput
 import com.example.data.repository.ReportType
@@ -180,6 +182,10 @@ class HesabatyViewModel(private val container: AppContainer) : ViewModel() {
 
     val suppliers: StateFlow<List<SupplierEntity>> = _activeTenantId.flatMapLatest { tid ->
         if (tid == null) flowOf(emptyList()) else accRepo.observeSuppliers(tid)
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val purchaseInvoices: StateFlow<List<PurchaseInvoiceEntity>> = _activeTenantId.flatMapLatest { tid ->
+        if (tid == null) flowOf(emptyList()) else accRepo.observePurchaseInvoices(tid)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     val invoices: StateFlow<List<SalesInvoiceEntity>> = _activeTenantId.flatMapLatest { tid ->
@@ -932,6 +938,49 @@ class HesabatyViewModel(private val container: AppContainer) : ViewModel() {
         }
     }
 
+    fun createPurchaseInvoice(
+        supplierId: String,
+        lines: List<PurchaseLineDraft>,
+        purchaseType: String,
+        paymentMethod: String,
+        paidNowPiasters: Long,
+        dueDateMillis: Long?,
+        notes: String,
+        occurredAtMillis: Long,
+        idempotencyKey: String,
+        onDone: (Boolean, String) -> Unit
+    ) {
+        val (tid, actor) = requireShopActor() ?: return
+        viewModelScope.launch {
+            _isBusy.value = true
+            try {
+                when (
+                    val res = accRepo.createPurchaseInvoice(
+                        tenantId = tid,
+                        actor = actor,
+                        supplierId = supplierId,
+                        lines = lines,
+                        purchaseType = purchaseType,
+                        paymentMethod = paymentMethod,
+                        paidNowPiasters = paidNowPiasters,
+                        dueDateMillis = dueDateMillis,
+                        notes = notes,
+                        occurredAtMillis = occurredAtMillis,
+                        idempotencyKey = idempotencyKey
+                    )
+                ) {
+                    is RepoResult.Error -> onDone(false, res.message)
+                    is RepoResult.Success -> {
+                        emitMessage("تم حفظ فاتورة الشراء ${res.data.invoiceNumber} وتحديث حساب المورد")
+                        onDone(true, res.data.id)
+                    }
+                }
+            } finally {
+                _isBusy.value = false
+            }
+        }
+    }
+
     fun createSalesInvoice(
         customerId: String,
         lines: List<SaleLineDraft>,
@@ -1271,6 +1320,18 @@ class HesabatyViewModel(private val container: AppContainer) : ViewModel() {
 
     fun observeSupplierTransactions(supplierId: String) = activeTenantId.flatMapLatest { tid ->
         if (tid == null) flowOf(emptyList()) else accRepo.observeSupplierTransactions(tid, supplierId)
+    }
+
+    fun observeSupplierPurchaseInvoices(supplierId: String) = activeTenantId.flatMapLatest { tid ->
+        if (tid == null) flowOf(emptyList()) else accRepo.observeSupplierPurchaseInvoices(tid, supplierId)
+    }
+
+    fun observePurchaseInvoiceById(purchaseId: String) = activeTenantId.flatMapLatest { tid ->
+        if (tid == null) flowOf(null) else accRepo.observePurchaseInvoiceById(tid, purchaseId)
+    }
+
+    fun observePurchaseInvoiceItems(purchaseId: String) = activeTenantId.flatMapLatest { tid ->
+        if (tid == null) flowOf(emptyList()) else accRepo.observePurchaseInvoiceItems(tid, purchaseId)
     }
 
     fun observeInvoiceById(invoiceId: String) = activeTenantId.flatMapLatest { tid ->

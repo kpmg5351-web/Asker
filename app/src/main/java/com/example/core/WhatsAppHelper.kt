@@ -26,11 +26,15 @@ object WhatsAppHelper {
         totalPiasters: Long,
         paidPiasters: Long,
         remainingPiasters: Long,
-        invoiceTypeLabel: String = "الفاتورة"
+        invoiceTypeLabel: String = "الفاتورة",
+        lines: List<PdfInvoiceGenerator.InvoiceLineRow> = emptyList(),
+        dueDateFormatted: String? = null,
+        notes: String = ""
     ): String {
         val total = MoneyFormatter.formatEgp(totalPiasters, currencyLabel = "")
         val paid = MoneyFormatter.formatEgp(paidPiasters, currencyLabel = "")
         val remaining = MoneyFormatter.formatEgp(remainingPiasters, currencyLabel = "")
+        val totalQtyMilli = lines.sumOf { it.quantityMilli }
         return buildString {
             appendLine("السلام عليكم ورحمة الله وبركاته 🌿")
             appendLine("أستاذنا الفاضل / $customerName 🌹")
@@ -39,6 +43,20 @@ object WhatsAppHelper {
             appendLine()
             appendLine("▫️ رقم الفاتورة: *$invoiceNumber*")
             appendLine("▫️ التاريخ: $dateFormatted")
+            if (!dueDateFormatted.isNullOrBlank()) {
+                appendLine("▫️ تاريخ الاستحقاق: $dueDateFormatted")
+            }
+            if (lines.isNotEmpty()) {
+                appendLine("📦 عدد البنود: *${lines.size}*  •  إجمالي العدد/الكمية: *${MoneyFormatter.formatQuantity(totalQtyMilli)}*")
+                appendLine("📋 تفاصيل الأصناف:")
+                lines.forEachIndexed { idx, line ->
+                    val qty = MoneyFormatter.formatQuantity(line.quantityMilli)
+                    val unitPrice = MoneyFormatter.formatEgp(line.unitPricePiasters, currencyLabel = "")
+                    val lineSum = MoneyFormatter.formatEgp(line.lineTotalPiasters, currencyLabel = "")
+                    val timePrefix = if (!line.timeLabel.isNullOrBlank()) "[${line.timeLabel}] " else ""
+                    appendLine("  ${idx + 1}. $timePrefix${line.description.ifBlank { "بند" }} — الكمية: *$qty* × $unitPrice ج.م = *$lineSum ج.م*")
+                }
+            }
             appendLine("━━━━━━━━━━━━━━━")
             appendLine("💰 إجمالي الفاتورة: *$total جنيه*")
             appendLine("✅ المبلغ المدفوع: *$paid جنيه*")
@@ -48,11 +66,69 @@ object WhatsAppHelper {
                 appendLine("📌 المبلغ المتبقي: *$remaining جنيه*")
             }
             appendLine("━━━━━━━━━━━━━━━")
+            if (notes.isNotBlank()) {
+                appendLine("📝 ملاحظات: $notes")
+            }
             appendLine()
             appendLine("📎 مرفق لحضرتك صورة الفاتورة للمراجعة والاحتفاظ بها.")
             appendLine("نتشرف دائمًا بخدمتك، وشكرًا لثقتك الغالية فينا ❤️✨")
             appendLine()
             append("مع تحيات: *$shopName*")
+        }
+    }
+
+    fun buildPurchaseInvoiceMessage(
+        supplierName: String,
+        shopName: String,
+        invoiceNumber: String,
+        dateFormatted: String,
+        totalPiasters: Long,
+        paidPiasters: Long,
+        remainingPiasters: Long,
+        purchaseTypeLabel: String = "فاتورة شراء",
+        lines: List<PdfInvoiceGenerator.InvoiceLineRow> = emptyList(),
+        dueDateFormatted: String? = null,
+        notes: String = ""
+    ): String {
+        val total = MoneyFormatter.formatEgp(totalPiasters, currencyLabel = "")
+        val paid = MoneyFormatter.formatEgp(paidPiasters, currencyLabel = "")
+        val remaining = MoneyFormatter.formatEgp(remainingPiasters, currencyLabel = "")
+        val totalQtyMilli = lines.sumOf { it.quantityMilli }
+        return buildString {
+            appendLine("السلام عليكم ورحمة الله وبركاته 🤝")
+            appendLine("السادة / $supplierName الكرام 🌿")
+            appendLine()
+            appendLine("نُرفق لحضرتكم صورة *$purchaseTypeLabel* الصادرة من *$shopName* 🧾📦")
+            appendLine()
+            appendLine("▫️ رقم الفاتورة: *$invoiceNumber*")
+            appendLine("▫️ التاريخ: $dateFormatted")
+            if (!dueDateFormatted.isNullOrBlank()) {
+                appendLine("▫️ تاريخ الاستحقاق: $dueDateFormatted")
+            }
+            if (lines.isNotEmpty()) {
+                appendLine("📦 عدد البنود: *${lines.size}*  •  إجمالي العدد/الكمية: *${MoneyFormatter.formatQuantity(totalQtyMilli)}*")
+                appendLine("📋 تفاصيل المشتريات:")
+                lines.forEachIndexed { idx, line ->
+                    val qty = MoneyFormatter.formatQuantity(line.quantityMilli)
+                    val unitPrice = MoneyFormatter.formatEgp(line.unitPricePiasters, currencyLabel = "")
+                    val lineSum = MoneyFormatter.formatEgp(line.lineTotalPiasters, currencyLabel = "")
+                    appendLine("  ${idx + 1}. ${line.description.ifBlank { "بند" }} — الكمية: *$qty* × $unitPrice ج.م = *$lineSum ج.م*")
+                }
+            }
+            appendLine("━━━━━━━━━━━━━━━")
+            appendLine("💰 إجمالي الفاتورة: *$total جنيه*")
+            appendLine("✅ المبلغ المدفوع: *$paid جنيه*")
+            if (remainingPiasters <= 0L) {
+                appendLine("🎉 الحالة: *مدفوعة بالكامل* ✅")
+            } else {
+                appendLine("📌 المبلغ المتبقي للمورد: *$remaining جنيه*")
+            }
+            appendLine("━━━━━━━━━━━━━━━")
+            if (notes.isNotBlank()) {
+                appendLine("📝 ملاحظات: $notes")
+            }
+            appendLine()
+            append("مع خالص التقدير والاحترام — *$shopName*")
         }
     }
 

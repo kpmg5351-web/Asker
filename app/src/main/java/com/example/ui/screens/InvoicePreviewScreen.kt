@@ -76,6 +76,29 @@ fun InvoicePreviewScreen(
     val inv = invoice
     val customer = customers.firstOrNull { it.id == inv?.customerId }
 
+    fun buildPrintLines(): List<PdfInvoiceGenerator.InvoiceLineRow> {
+        val currentInv = inv ?: return emptyList()
+        return if (items.isEmpty()) {
+            listOf(
+                PdfInvoiceGenerator.InvoiceLineRow(
+                    description = currentInv.notes.ifBlank { "مبيعات / فاتورة" },
+                    unitPricePiasters = currentInv.totalPiasters,
+                    quantityMilli = 1000L,
+                    lineTotalPiasters = currentInv.totalPiasters
+                )
+            )
+        } else {
+            items.map {
+                PdfInvoiceGenerator.InvoiceLineRow(
+                    description = it.description,
+                    unitPricePiasters = it.unitPricePiasters,
+                    quantityMilli = it.quantityMilli,
+                    lineTotalPiasters = it.lineTotalPiasters
+                )
+            }
+        }
+    }
+
     fun buildPrintModel(): PdfInvoiceGenerator.InvoicePrintModel? {
         val currentInv = inv ?: return null
         return PdfInvoiceGenerator.InvoicePrintModel(
@@ -87,30 +110,15 @@ fun InvoicePreviewScreen(
             dateFormatted = EgyptTime.formatDateTime(currentInv.createdAt),
             invoiceTypeLabel = SaleTypes.arabicLabel(currentInv.saleType),
             paymentMethodLabel = PaymentMethods.arabicLabel(currentInv.paymentMethod),
-            lines = if (items.isEmpty()) {
-                listOf(
-                    PdfInvoiceGenerator.InvoiceLineRow(
-                        description = currentInv.notes.ifBlank { "مبيعات / فاتورة" },
-                        unitPricePiasters = currentInv.totalPiasters,
-                        quantityMilli = 1000L,
-                        lineTotalPiasters = currentInv.totalPiasters
-                    )
-                )
-            } else {
-                items.map {
-                    PdfInvoiceGenerator.InvoiceLineRow(
-                        description = it.description,
-                        unitPricePiasters = it.unitPricePiasters,
-                        quantityMilli = it.quantityMilli,
-                        lineTotalPiasters = it.lineTotalPiasters
-                    )
-                }
-            },
+            lines = buildPrintLines(),
             totalPiasters = currentInv.totalPiasters,
             paidPiasters = currentInv.paidPiasters,
             remainingPiasters = currentInv.remainingPiasters,
             notes = currentInv.notes,
-            signatureName = settings?.invoiceSignatureName.orEmpty()
+            signatureName = settings?.invoiceSignatureName.orEmpty(),
+            recipientPrefix = "السيد /",
+            recipientPhone = customer?.phone.orEmpty(),
+            dueDateFormatted = currentInv.dueDateMillis?.let { EgyptTime.formatDate(it) }
         )
     }
 
@@ -179,8 +187,14 @@ fun InvoicePreviewScreen(
 
                     Spacer(modifier = Modifier.height(12.dp))
                     Text("السيد / العميل: ${customer?.name ?: "—"}", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                    if (!customer?.phone.isNullOrBlank()) {
+                        Text("هاتف العميل: ${customer!!.phone}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
                     Text("التاريخ: ${EgyptTime.formatDateTime(inv.createdAt)}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Text("طريقة الدفع: ${PaymentMethods.arabicLabel(inv.paymentMethod)}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    inv.dueDateMillis?.let { dueMillis ->
+                        Text("تاريخ الاستحقاق: ${EgyptTime.formatDate(dueMillis)}", style = MaterialTheme.typography.bodySmall, color = extras.warning, fontWeight = FontWeight.SemiBold)
+                    }
 
                     Spacer(modifier = Modifier.height(14.dp))
 
@@ -195,21 +209,14 @@ fun InvoicePreviewScreen(
                     ) {
                         Text("البيان", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold, modifier = Modifier.weight(2.2f))
                         Text("السعر", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center, modifier = Modifier.weight(1f))
-                        Text("العدد", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center, modifier = Modifier.weight(0.8f))
-                        Text("جنيه", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center, modifier = Modifier.weight(1f))
-                        Text("قرش", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center, modifier = Modifier.weight(0.7f))
+                        Text("العدد/الكمية", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center, modifier = Modifier.weight(0.95f))
+                        Text("جنيه", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center, modifier = Modifier.weight(0.95f))
+                        Text("قرش", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center, modifier = Modifier.weight(0.65f))
                     }
 
-                    val displayRows = if (items.isEmpty()) {
-                        listOf(
-                            Triple(inv.notes.ifBlank { "مبيعات" }, inv.totalPiasters, 1000L) to inv.totalPiasters
-                        )
-                    } else {
-                        items.map { Triple(it.description, it.unitPricePiasters, it.quantityMilli) to it.lineTotalPiasters }
-                    }
-
-                    displayRows.forEach { (triple, lineTotal) ->
-                        val (pounds, piasters) = MoneyFormatter.splitPoundsAndPiasters(lineTotal)
+                    val printLines = buildPrintLines()
+                    printLines.forEach { row ->
+                        val (pounds, piasters) = MoneyFormatter.splitPoundsAndPiasters(row.lineTotalPiasters)
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -217,15 +224,44 @@ fun InvoicePreviewScreen(
                                 .padding(vertical = 8.dp, horizontal = 6.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text(triple.first, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(2.2f))
-                            Text(MoneyFormatter.formatEgp(triple.second, ""), style = MaterialTheme.typography.bodySmall, textAlign = TextAlign.Center, modifier = Modifier.weight(1f))
-                            Text(MoneyFormatter.formatQuantity(triple.third), style = MaterialTheme.typography.bodySmall, textAlign = TextAlign.Center, modifier = Modifier.weight(0.8f))
-                            Text(MoneyFormatter.formatEgp(pounds * 100L, ""), style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center, modifier = Modifier.weight(1f))
-                            Text(String.format("%02d", piasters), style = MaterialTheme.typography.bodySmall, textAlign = TextAlign.Center, modifier = Modifier.weight(0.7f))
+                            Text(row.description, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(2.2f))
+                            Text(MoneyFormatter.formatEgp(row.unitPricePiasters, ""), style = MaterialTheme.typography.bodySmall, textAlign = TextAlign.Center, modifier = Modifier.weight(1f))
+                            Text(MoneyFormatter.formatQuantity(row.quantityMilli), style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center, modifier = Modifier.weight(0.95f))
+                            Text(MoneyFormatter.formatEgp(pounds * 100L, ""), style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center, modifier = Modifier.weight(0.95f))
+                            Text(String.format("%02d", piasters), style = MaterialTheme.typography.bodySmall, textAlign = TextAlign.Center, modifier = Modifier.weight(0.65f))
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(14.dp))
+                    val totalQtyMilli = printLines.sumOf { it.quantityMilli }
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Surface(
+                        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f),
+                        shape = MaterialTheme.shapes.small,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp, vertical = 8.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                "عدد البنود: ${printLines.size}",
+                                style = MaterialTheme.typography.labelLarge,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                            Text(
+                                "إجمالي العدد / الكمية: ${MoneyFormatter.formatQuantity(totalQtyMilli)}",
+                                style = MaterialTheme.typography.labelLarge,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
                     HorizontalDivider()
                     Spacer(modifier = Modifier.height(10.dp))
 
@@ -293,7 +329,10 @@ fun InvoicePreviewScreen(
                     totalPiasters = inv.totalPiasters,
                     paidPiasters = inv.paidPiasters,
                     remainingPiasters = inv.remainingPiasters,
-                    invoiceTypeLabel = SaleTypes.arabicLabel(inv.saleType)
+                    invoiceTypeLabel = SaleTypes.arabicLabel(inv.saleType),
+                    lines = buildPrintLines(),
+                    dueDateFormatted = inv.dueDateMillis?.let { EgyptTime.formatDate(it) },
+                    notes = inv.notes
                 )
                 Button(
                     onClick = {
