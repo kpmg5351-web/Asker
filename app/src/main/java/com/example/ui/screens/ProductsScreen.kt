@@ -1,8 +1,22 @@
 package com.example.ui.screens
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -13,20 +27,32 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Calculate
+import androidx.compose.material.icons.filled.Category
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DeleteOutline
+import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Inventory2
+import androidx.compose.material.icons.filled.Numbers
+import androidx.compose.material.icons.filled.QrCode2
+import androidx.compose.material.icons.filled.Scale
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Straighten
 import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -38,7 +64,9 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -50,15 +78,23 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.core.EgyptTime
 import com.example.core.MoneyFormatter
 import com.example.core.PdfInvoiceGenerator
+import com.example.core.UnitMeasureCategory
+import com.example.core.UnitMeasurement
 import com.example.core.WhatsAppHelper
 import com.example.data.local.ProductEntity
 import com.example.ui.components.EmptyStateView
@@ -67,10 +103,11 @@ import com.example.ui.components.HesabatyTopBar
 import com.example.ui.components.StatusBadge
 import com.example.ui.components.SummaryStatPill
 import com.example.ui.theme.HesabatyThemeExtras
+import com.example.ui.theme.PrimaryBlue
+import com.example.ui.theme.PrimaryDarkBlue
 import com.example.ui.viewmodel.HesabatyViewModel
 
 private val CommonCategories = listOf("عام", "مواد غذائية", "مستلزمات", "قطع غيار", "أدوات", "ملابس", "إلكترونيات")
-private val CommonUnits = listOf("قطعة", "كرتونة", "كيلو", "علبة", "دستة", "متر", "شكارة", "عبوة")
 
 @Composable
 fun ProductsScreen(
@@ -430,6 +467,7 @@ fun ProductsScreen(
     if (showAddDialog) {
         ProductFormDialog(
             initial = null,
+            currency = currency,
             onDismiss = { showAddDialog = false },
             onSave = { name, cat, sku, unit, saleP, buyP, stockM, track, minM, notes, onErr ->
                 viewModel.addProduct(name, cat, sku, unit, saleP, buyP, stockM, track, minM, notes) { ok, msg ->
@@ -442,6 +480,7 @@ fun ProductsScreen(
     editingProduct?.let { prod ->
         ProductFormDialog(
             initial = prod,
+            currency = currency,
             onDismiss = { editingProduct = null },
             onSave = { name, cat, sku, unit, saleP, buyP, stockM, track, minM, notes, onErr ->
                 viewModel.updateProduct(prod.id, name, cat, sku, unit, saleP, buyP, stockM, track, minM, notes) { ok, msg ->
@@ -486,9 +525,11 @@ fun ProductsScreen(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun ProductFormDialog(
     initial: ProductEntity? = null,
+    currency: String = "ج.م",
     onDismiss: () -> Unit,
     onSave: (
         name: String,
@@ -505,9 +546,20 @@ fun ProductFormDialog(
     ) -> Unit
 ) {
     var name by remember { mutableStateOf(initial?.name ?: "") }
-    var category by remember { mutableStateOf(initial?.category ?: "عام") }
+    var category by remember { mutableStateOf(initial?.category?.ifBlank { "عام" } ?: "عام") }
+    var showCustomCategory by remember { mutableStateOf(initial != null && initial.category.isNotBlank() && initial.category !in CommonCategories) }
     var sku by remember { mutableStateOf(initial?.skuOrBarcode ?: "") }
-    var unitLabel by remember { mutableStateOf(initial?.unitLabel ?: "قطعة") }
+    var unitLabel by remember { mutableStateOf(initial?.unitLabel?.ifBlank { "قطعة" } ?: "قطعة") }
+    var selectedUnitCategory by remember {
+        mutableStateOf(UnitMeasurement.categoryForUnit(initial?.unitLabel ?: "قطعة"))
+    }
+    var showCustomUnit by remember {
+        mutableStateOf(
+            initial != null &&
+                initial.unitLabel.isNotBlank() &&
+                initial.unitLabel !in UnitMeasurement.allQuickUnits
+        )
+    }
     var salePriceText by remember {
         mutableStateOf(
             if (initial != null && initial.salePricePiasters > 0L) MoneyFormatter.formatEgpPlainInput(initial.salePricePiasters) else ""
@@ -532,190 +584,668 @@ fun ProductFormDialog(
     var notes by remember { mutableStateOf(initial?.notes ?: "") }
     var err by remember { mutableStateOf<String?>(null) }
 
-    AlertDialog(
+    val extras = HesabatyThemeExtras.colors
+    val parsedSalePreview = remember(salePriceText) { MoneyFormatter.parseEgpToPiasters(salePriceText) ?: 0L }
+    val parsedBuyPreview = remember(purchasePriceText) { MoneyFormatter.parseEgpToPiasters(purchasePriceText) ?: 0L }
+    val previewExamples = remember(unitLabel, parsedSalePreview, currency) {
+        UnitMeasurement.buildProductUnitPreview(unitLabel, parsedSalePreview, currency)
+    }
+    val cleanUnit = unitLabel.trim().ifBlank { "قطعة" }
+    val fieldColors = OutlinedTextFieldDefaults.colors(
+        focusedBorderColor = PrimaryBlue,
+        unfocusedBorderColor = extras.cardBorder,
+        focusedContainerColor = MaterialTheme.colorScheme.surface,
+        unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.25f)
+    )
+
+    Dialog(
         onDismissRequest = onDismiss,
-        title = {
-            Text(
-                text = if (initial == null) "إضافة صنف جديد" else "تعديل بيانات الصنف",
-                fontWeight = FontWeight.Bold
-            )
-        },
-        text = {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(max = 460.dp)
-                    .verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                OutlinedTextField(
-                    value = name,
-                    onValueChange = { name = it; err = null },
-                    label = { Text("اسم الصنف *") },
-                    placeholder = { Text("مثال: كرتونة زيت / شيكارة أسمنت / تيشيرت") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth().testTag("product_form_name")
-                )
-
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedTextField(
-                        value = salePriceText,
-                        onValueChange = { salePriceText = it; err = null },
-                        label = { Text("سعر البيع (ج.م) *") },
-                        singleLine = true,
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                        modifier = Modifier.weight(1f).testTag("product_form_sale_price")
-                    )
-                    OutlinedTextField(
-                        value = purchasePriceText,
-                        onValueChange = { purchasePriceText = it; err = null },
-                        label = { Text("سعر الشراء (اختياري)") },
-                        singleLine = true,
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                        modifier = Modifier.weight(1f).testTag("product_form_purchase_price")
-                    )
-                }
-
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedTextField(
-                        value = unitLabel,
-                        onValueChange = { unitLabel = it },
-                        label = { Text("الوحدة") },
-                        singleLine = true,
-                        modifier = Modifier.weight(1f)
-                    )
-                    OutlinedTextField(
-                        value = category,
-                        onValueChange = { category = it },
-                        label = { Text("التصنيف") },
-                        singleLine = true,
-                        modifier = Modifier.weight(1f)
-                    )
-                }
-
-                // Quick unit presets
-                Row(
-                    modifier = Modifier.horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    CommonUnits.forEach { preset ->
-                        FilterChip(
-                            selected = unitLabel == preset,
-                            onClick = { unitLabel = preset },
-                            label = { Text(preset, style = MaterialTheme.typography.labelSmall) }
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth(0.94f)
+                .widthIn(max = 520.dp)
+                .heightIn(max = 720.dp),
+            shape = RoundedCornerShape(28.dp),
+            color = MaterialTheme.colorScheme.surface,
+            border = BorderStroke(1.dp, extras.cardBorder),
+            tonalElevation = 6.dp,
+            shadowElevation = 16.dp
+        ) {
+            Column(modifier = Modifier.fillMaxWidth()) {
+                // Royal-Blue Hero Header
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(
+                            Brush.horizontalGradient(
+                                colors = listOf(PrimaryDarkBlue, PrimaryBlue, Color(0xFF2684FF))
+                            )
                         )
+                        .padding(horizontal = 18.dp, vertical = 16.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(44.dp)
+                                .clip(RoundedCornerShape(14.dp))
+                                .background(Color.White.copy(alpha = 0.18f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Inventory2,
+                                contentDescription = null,
+                                tint = Color.White,
+                                modifier = Modifier.size(24.dp)
+                            )
+                        }
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = if (initial == null) "إضافة صنف جديد" else "تعديل بيانات الصنف",
+                                style = MaterialTheme.typography.titleLarge,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = Color.White
+                            )
+                            Text(
+                                text = "حدّد وحدة الحساب (عدد أو وزن أو مقاس) وسعر البيع",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = Color.White.copy(alpha = 0.86f),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                        IconButton(
+                            onClick = onDismiss,
+                            modifier = Modifier
+                                .size(36.dp)
+                                .clip(CircleShape)
+                                .background(Color.White.copy(alpha = 0.16f))
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = "إغلاق",
+                                tint = Color.White,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
                     }
                 }
 
-                // Quick category presets
-                Row(
-                    modifier = Modifier.horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                // Scrollable Body
+                Column(
+                    modifier = Modifier
+                        .weight(1f, fill = false)
+                        .verticalScroll(rememberScrollState())
+                        .padding(horizontal = 16.dp, vertical = 14.dp),
+                    verticalArrangement = Arrangement.spacedBy(14.dp)
                 ) {
-                    CommonCategories.forEach { preset ->
-                        FilterChip(
-                            selected = category == preset,
-                            onClick = { category = preset },
-                            label = { Text(preset, style = MaterialTheme.typography.labelSmall) }
-                        )
+                    // Section 1: Product Name & Category
+                    Surface(
+                        shape = RoundedCornerShape(18.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.22f),
+                        border = BorderStroke(1.dp, extras.cardBorder.copy(alpha = 0.7f))
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(14.dp),
+                            verticalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Category,
+                                    contentDescription = null,
+                                    tint = PrimaryBlue,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Text(
+                                    text = "بيانات الصنف والتصنيف",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+
+                            OutlinedTextField(
+                                value = name,
+                                onValueChange = { name = it; err = null },
+                                label = { Text("اسم الصنف *") },
+                                placeholder = { Text("مثال: سكر أبيض / كرتونة زيت / قماش") },
+                                leadingIcon = {
+                                    Icon(Icons.Default.Inventory2, contentDescription = null, tint = PrimaryBlue)
+                                },
+                                singleLine = true,
+                                shape = RoundedCornerShape(14.dp),
+                                colors = fieldColors,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("product_form_name")
+                            )
+
+                            Text(
+                                text = "التصنيف",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+
+                            FlowRow(
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                verticalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                CommonCategories.forEach { preset ->
+                                    SelectablePillChip(
+                                        label = preset,
+                                        selected = !showCustomCategory && category == preset,
+                                        onClick = {
+                                            showCustomCategory = false
+                                            category = preset
+                                        }
+                                    )
+                                }
+                                SelectablePillChip(
+                                    label = "تصنيف آخر",
+                                    selected = showCustomCategory,
+                                    onClick = { showCustomCategory = true }
+                                )
+                            }
+
+                            AnimatedVisibility(visible = showCustomCategory) {
+                                OutlinedTextField(
+                                    value = category,
+                                    onValueChange = { category = it },
+                                    label = { Text("اكتب التصنيف") },
+                                    singleLine = true,
+                                    shape = RoundedCornerShape(14.dp),
+                                    colors = fieldColors,
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                            }
+                        }
+                    }
+
+                    // Section 2: Measurement Mode, Unit & Pricing
+                    Surface(
+                        shape = RoundedCornerShape(18.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.22f),
+                        border = BorderStroke(1.dp, extras.cardBorder.copy(alpha = 0.7f))
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(14.dp),
+                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Icon(
+                                    imageVector = if (selectedUnitCategory == UnitMeasureCategory.WEIGHT) {
+                                        Icons.Default.Scale
+                                    } else {
+                                        Icons.Default.Calculate
+                                    },
+                                    contentDescription = null,
+                                    tint = PrimaryBlue,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Text(
+                                    text = "طريقة الحساب والوحدة",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+
+                            // 3-Mode Segmented Selector: Count / Weight / Pack & Measure
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(14.dp))
+                                    .background(MaterialTheme.colorScheme.surface)
+                                    .border(1.dp, extras.cardBorder, RoundedCornerShape(14.dp))
+                                    .padding(4.dp),
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                listOf(
+                                    Triple(UnitMeasureCategory.COUNT, "بالعدد", Icons.Default.Numbers),
+                                    Triple(UnitMeasureCategory.WEIGHT, "بالوزن", Icons.Default.Scale),
+                                    Triple(UnitMeasureCategory.MEASURE, "تعبئة ومقاس", Icons.Default.Straighten)
+                                ).forEach { (cat, title, icon) ->
+                                    val active = selectedUnitCategory == cat
+                                    val bg by animateColorAsState(
+                                        targetValue = if (active) PrimaryBlue else Color.Transparent,
+                                        animationSpec = tween(180),
+                                        label = "unit_mode_bg"
+                                    )
+                                    val fg by animateColorAsState(
+                                        targetValue = if (active) Color.White else MaterialTheme.colorScheme.onSurfaceVariant,
+                                        animationSpec = tween(180),
+                                        label = "unit_mode_fg"
+                                    )
+                                    Row(
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .height(40.dp)
+                                            .clip(RoundedCornerShape(10.dp))
+                                            .background(bg)
+                                            .clickable {
+                                                selectedUnitCategory = cat
+                                                showCustomUnit = false
+                                                val presets = UnitMeasurement.unitsForCategory(cat)
+                                                if (unitLabel !in presets) {
+                                                    unitLabel = presets.first()
+                                                }
+                                            }
+                                            .testTag("unit_mode_${cat.name.lowercase()}"),
+                                        horizontalArrangement = Arrangement.Center,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Icon(
+                                            imageVector = icon,
+                                            contentDescription = null,
+                                            tint = fg,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text(
+                                            text = title,
+                                            style = MaterialTheme.typography.labelMedium,
+                                            fontWeight = if (active) FontWeight.Bold else FontWeight.Medium,
+                                            color = fg,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
+                                }
+                            }
+
+                            // Units within the selected category
+                            FlowRow(
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                verticalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                UnitMeasurement.unitsForCategory(selectedUnitCategory).forEach { preset ->
+                                    SelectablePillChip(
+                                        label = preset,
+                                        selected = !showCustomUnit && unitLabel == preset,
+                                        onClick = {
+                                            showCustomUnit = false
+                                            unitLabel = preset
+                                        }
+                                    )
+                                }
+                                SelectablePillChip(
+                                    label = "وحدة أخرى",
+                                    selected = showCustomUnit,
+                                    onClick = { showCustomUnit = true }
+                                )
+                            }
+
+                            AnimatedVisibility(visible = showCustomUnit) {
+                                OutlinedTextField(
+                                    value = unitLabel,
+                                    onValueChange = { unitLabel = it },
+                                    label = { Text("اسم الوحدة المخصصة") },
+                                    placeholder = { Text("مثال: لفة / شوال / زوج") },
+                                    singleLine = true,
+                                    shape = RoundedCornerShape(14.dp),
+                                    colors = fieldColors,
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                            }
+
+                            // Price Inputs labeled dynamically with selected unit
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                OutlinedTextField(
+                                    value = salePriceText,
+                                    onValueChange = { salePriceText = it; err = null },
+                                    label = { Text("سعر البيع ($cleanUnit) *") },
+                                    suffix = { Text(currency, style = MaterialTheme.typography.labelSmall) },
+                                    singleLine = true,
+                                    shape = RoundedCornerShape(14.dp),
+                                    colors = fieldColors,
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .testTag("product_form_sale_price")
+                                )
+                                OutlinedTextField(
+                                    value = purchasePriceText,
+                                    onValueChange = { purchasePriceText = it; err = null },
+                                    label = { Text("سعر الشراء ($cleanUnit)") },
+                                    suffix = { Text(currency, style = MaterialTheme.typography.labelSmall) },
+                                    singleLine = true,
+                                    shape = RoundedCornerShape(14.dp),
+                                    colors = fieldColors,
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .testTag("product_form_purchase_price")
+                                )
+                            }
+
+                            // Live Calculation Preview Card for Selected Unit
+                            AnimatedVisibility(
+                                visible = parsedSalePreview > 0L,
+                                enter = expandVertically(tween(200)) + fadeIn(tween(200)),
+                                exit = shrinkVertically(tween(160)) + fadeOut(tween(140))
+                            ) {
+                                Surface(
+                                    shape = RoundedCornerShape(14.dp),
+                                    color = PrimaryBlue.copy(alpha = 0.08f),
+                                    border = BorderStroke(1.dp, PrimaryBlue.copy(alpha = 0.25f))
+                                ) {
+                                    Column(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(10.dp),
+                                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                                    ) {
+                                        Text(
+                                            text = "حاسبة الوحدة التلقائية ($cleanUnit):",
+                                            style = MaterialTheme.typography.labelMedium,
+                                            fontWeight = FontWeight.Bold,
+                                            color = PrimaryBlue
+                                        )
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                        ) {
+                                            previewExamples.forEach { (qtyLbl, priceStr) ->
+                                                Surface(
+                                                    shape = RoundedCornerShape(10.dp),
+                                                    color = MaterialTheme.colorScheme.surface,
+                                                    border = BorderStroke(1.dp, extras.cardBorder),
+                                                    modifier = Modifier.weight(1f)
+                                                ) {
+                                                    Column(
+                                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 6.dp),
+                                                        horizontalAlignment = Alignment.CenterHorizontally
+                                                    ) {
+                                                        Text(
+                                                            text = qtyLbl,
+                                                            style = MaterialTheme.typography.labelSmall,
+                                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                            maxLines = 1,
+                                                            overflow = TextOverflow.Ellipsis
+                                                        )
+                                                        Text(
+                                                            text = priceStr,
+                                                            style = MaterialTheme.typography.labelMedium,
+                                                            fontWeight = FontWeight.Bold,
+                                                            color = MaterialTheme.colorScheme.onSurface,
+                                                            maxLines = 1,
+                                                            overflow = TextOverflow.Ellipsis
+                                                        )
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        if (parsedBuyPreview > 0L) {
+                                            val profit = parsedSalePreview - parsedBuyPreview
+                                            Text(
+                                                text = "صافي الربح لكل $cleanUnit: ${MoneyFormatter.formatEgp(profit, currency)}",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                fontWeight = FontWeight.Bold,
+                                                color = if (profit >= 0L) extras.success else extras.danger
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Section 3: Stock Tracking, Barcode & Notes
+                    Surface(
+                        shape = RoundedCornerShape(18.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.22f),
+                        border = BorderStroke(1.dp, extras.cardBorder.copy(alpha = 0.7f))
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(14.dp),
+                            verticalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Row(
+                                    modifier = Modifier.weight(1f),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(36.dp)
+                                            .clip(RoundedCornerShape(10.dp))
+                                            .background(PrimaryBlue.copy(alpha = 0.12f)),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Tune,
+                                            contentDescription = null,
+                                            tint = PrimaryBlue,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    }
+                                    Column {
+                                        Text(
+                                            text = "تتبع كمية المخزون تلقائيًا",
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                        Text(
+                                            text = "يُخصم بوحدة ($cleanUnit) عند البيع أو السحب",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
+                                Switch(
+                                    checked = trackStock,
+                                    onCheckedChange = { trackStock = it },
+                                    modifier = Modifier.testTag("product_form_track_stock_switch")
+                                )
+                            }
+
+                            AnimatedVisibility(visible = trackStock) {
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    OutlinedTextField(
+                                        value = stockQtyText,
+                                        onValueChange = { stockQtyText = it; err = null },
+                                        label = { Text("الرصيد ($cleanUnit)") },
+                                        singleLine = true,
+                                        shape = RoundedCornerShape(14.dp),
+                                        colors = fieldColors,
+                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .testTag("product_form_stock_qty")
+                                    )
+                                    OutlinedTextField(
+                                        value = minAlertText,
+                                        onValueChange = { minAlertText = it; err = null },
+                                        label = { Text("حد التنبيه ($cleanUnit)") },
+                                        singleLine = true,
+                                        shape = RoundedCornerShape(14.dp),
+                                        colors = fieldColors,
+                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .testTag("product_form_min_alert")
+                                    )
+                                }
+                            }
+
+                            OutlinedTextField(
+                                value = sku,
+                                onValueChange = { sku = it },
+                                label = { Text("كود الصنف / باركود (اختياري)") },
+                                leadingIcon = {
+                                    Icon(Icons.Default.QrCode2, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                                },
+                                singleLine = true,
+                                shape = RoundedCornerShape(14.dp),
+                                colors = fieldColors,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+
+                            OutlinedTextField(
+                                value = notes,
+                                onValueChange = { notes = it },
+                                label = { Text("ملاحظات (اختياري)") },
+                                leadingIcon = {
+                                    Icon(Icons.Default.Description, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                                },
+                                shape = RoundedCornerShape(14.dp),
+                                colors = fieldColors,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
+                    }
+
+                    AnimatedVisibility(visible = err != null) {
+                        Surface(
+                            color = extras.dangerContainer,
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Warning,
+                                    contentDescription = null,
+                                    tint = extras.danger,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = err.orEmpty(),
+                                    color = extras.danger,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
+                        }
                     }
                 }
 
-                OutlinedTextField(
-                    value = sku,
-                    onValueChange = { sku = it },
-                    label = { Text("كود الصنف / باركود (اختياري)") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
-
+                // Sticky Bottom Action Bar
+                HorizontalDivider(color = extras.cardBorder.copy(alpha = 0.7f))
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text("تتبع كمية المخزون تلقائيًا", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+                    Button(
+                        onClick = {
+                            val saleP = if (salePriceText.isBlank()) 0L else MoneyFormatter.parseEgpToPiasters(salePriceText)
+                            if (saleP == null || saleP < 0L) {
+                                err = "أدخل سعر بيع صحيحًا"
+                                return@Button
+                            }
+                            val buyP = if (purchasePriceText.isBlank()) 0L else (MoneyFormatter.parseEgpToPiasters(purchasePriceText) ?: -1L)
+                            if (buyP < 0L) {
+                                err = "أدخل سعر شراء صحيحًا"
+                                return@Button
+                            }
+                            val stockM = if (!trackStock || stockQtyText.isBlank()) 0L else (MoneyFormatter.parseQuantityToMilli(stockQtyText) ?: -1L)
+                            if (stockM < 0L) {
+                                err = "أدخل رصيد مخزون صحيحًا"
+                                return@Button
+                            }
+                            val minM = if (!trackStock || minAlertText.isBlank()) 0L else (MoneyFormatter.parseQuantityToMilli(minAlertText) ?: -1L)
+                            if (minM < 0L) {
+                                err = "أدخل حد تنبيه صحيحًا"
+                                return@Button
+                            }
+                            onSave(name, category, sku, cleanUnit, saleP, buyP, stockM, trackStock, minM, notes) { err = it }
+                        },
+                        shape = RoundedCornerShape(14.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = PrimaryBlue),
+                        modifier = Modifier
+                            .weight(1.4f)
+                            .height(50.dp)
+                            .testTag("product_form_save_btn")
+                    ) {
+                        Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
                         Text(
-                            "يُخصم تلقائيًا عند اختيار الصنف في المبيعات أو السحب اليومي",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                            text = if (initial == null) "حفظ الصنف" else "حفظ التعديلات",
+                            fontWeight = FontWeight.Bold
                         )
                     }
-                    Switch(
-                        checked = trackStock,
-                        onCheckedChange = { trackStock = it },
-                        modifier = Modifier.testTag("product_form_track_stock_switch")
-                    )
-                }
-
-                if (trackStock) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedTextField(
-                            value = stockQtyText,
-                            onValueChange = { stockQtyText = it; err = null },
-                            label = { Text("الرصيد الحالي") },
-                            singleLine = true,
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                            modifier = Modifier.weight(1f).testTag("product_form_stock_qty")
-                        )
-                        OutlinedTextField(
-                            value = minAlertText,
-                            onValueChange = { minAlertText = it; err = null },
-                            label = { Text("حد التنبيه") },
-                            singleLine = true,
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                            modifier = Modifier.weight(1f).testTag("product_form_min_alert")
-                        )
+                    OutlinedButton(
+                        onClick = onDismiss,
+                        shape = RoundedCornerShape(14.dp),
+                        border = BorderStroke(1.dp, extras.cardBorder),
+                        modifier = Modifier
+                            .weight(0.8f)
+                            .height(50.dp)
+                    ) {
+                        Text("إلغاء", fontWeight = FontWeight.SemiBold)
                     }
-                }
-
-                OutlinedTextField(
-                    value = notes,
-                    onValueChange = { notes = it },
-                    label = { Text("ملاحظات (اختياري)") },
-                    modifier = Modifier.fillMaxWidth()
-                )
-
-                err?.let {
-                    Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
                 }
             }
-        },
-        confirmButton = {
-            Button(
-                onClick = {
-                    val saleP = if (salePriceText.isBlank()) 0L else MoneyFormatter.parseEgpToPiasters(salePriceText)
-                    if (saleP == null || saleP < 0L) {
-                        err = "أدخل سعر بيع صحيحًا"
-                        return@Button
-                    }
-                    val buyP = if (purchasePriceText.isBlank()) 0L else (MoneyFormatter.parseEgpToPiasters(purchasePriceText) ?: -1L)
-                    if (buyP < 0L) {
-                        err = "أدخل سعر شراء صحيحًا"
-                        return@Button
-                    }
-                    val stockM = if (!trackStock || stockQtyText.isBlank()) 0L else (MoneyFormatter.parseQuantityToMilli(stockQtyText) ?: -1L)
-                    if (stockM < 0L) {
-                        err = "أدخل رصيد مخزون صحيحًا"
-                        return@Button
-                    }
-                    val minM = if (!trackStock || minAlertText.isBlank()) 0L else (MoneyFormatter.parseQuantityToMilli(minAlertText) ?: -1L)
-                    if (minM < 0L) {
-                        err = "أدخل حد تنبيه صحيحًا"
-                        return@Button
-                    }
-                    onSave(name, category, sku, unitLabel, saleP, buyP, stockM, trackStock, minM, notes) { err = it }
-                },
-                modifier = Modifier.testTag("product_form_save_btn")
-            ) {
-                Text(if (initial == null) "حفظ الصنف" else "حفظ التعديلات")
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) { Text("إلغاء") }
         }
+    }
+}
+
+@Composable
+private fun SelectablePillChip(
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit
+) {
+    val bg by animateColorAsState(
+        targetValue = if (selected) PrimaryBlue else MaterialTheme.colorScheme.surface,
+        animationSpec = tween(160),
+        label = "pill_bg"
     )
+    val fg by animateColorAsState(
+        targetValue = if (selected) Color.White else MaterialTheme.colorScheme.onSurface,
+        animationSpec = tween(160),
+        label = "pill_fg"
+    )
+    val borderCol = if (selected) PrimaryBlue else HesabatyThemeExtras.colors.cardBorder
+
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(12.dp),
+        color = bg,
+        border = BorderStroke(1.dp, borderCol)
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            if (selected) {
+                Icon(
+                    imageVector = Icons.Default.Check,
+                    contentDescription = null,
+                    tint = Color.White,
+                    modifier = Modifier.size(14.dp)
+                )
+            }
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+                color = fg
+            )
+        }
+    }
 }
 
 @Composable
@@ -804,6 +1334,7 @@ fun ProductPickerDialog(
     onQuickAddNew: () -> Unit
 ) {
     var query by remember { mutableStateOf("") }
+    val extras = HesabatyThemeExtras.colors
     val filtered = remember(products, query) {
         val q = query.trim()
         if (q.isEmpty()) products
@@ -814,87 +1345,183 @@ fun ProductPickerDialog(
         }
     }
 
-    AlertDialog(
+    Dialog(
         onDismissRequest = onDismiss,
-        title = { Text("اختيار من الأصناف المسجلة", fontWeight = FontWeight.Bold) },
-        text = {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(max = 420.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                OutlinedTextField(
-                    value = query,
-                    onValueChange = { query = it },
-                    placeholder = { Text("بحث باسم الصنف أو الكود...") },
-                    leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
-                if (filtered.isEmpty()) {
-                    Text(
-                        text = if (products.isEmpty()) {
-                            "لا توجد أصناف مسجلة بعد. يمكنك إضافة صنف جديد الآن أو الكتابة يدويًا في الفاتورة."
-                        } else {
-                            "لا توجد أصناف مطابقة للبحث."
-                        },
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                } else {
-                    LazyColumn(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .weight(1f, fill = false),
-                        verticalArrangement = Arrangement.spacedBy(6.dp)
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth(0.94f)
+                .widthIn(max = 520.dp)
+                .heightIn(max = 640.dp),
+            shape = RoundedCornerShape(26.dp),
+            color = MaterialTheme.colorScheme.surface,
+            border = BorderStroke(1.dp, extras.cardBorder),
+            shadowElevation = 14.dp
+        ) {
+            Column(modifier = Modifier.fillMaxWidth()) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(
+                            Brush.horizontalGradient(
+                                colors = listOf(PrimaryDarkBlue, PrimaryBlue, Color(0xFF2684FF))
+                            )
+                        )
+                        .padding(horizontal = 18.dp, vertical = 14.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
-                        items(filtered, key = { it.id }) { prod ->
-                            HesabatyCard(
-                                onClick = { onSelect(prod) },
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
+                        Box(
+                            modifier = Modifier
+                                .size(40.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(Color.White.copy(alpha = 0.18f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(Icons.Default.Inventory2, contentDescription = null, tint = Color.White, modifier = Modifier.size(20.dp))
+                        }
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "اختيار من الأصناف المسجلة",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = Color.White
+                            )
+                            Text(
+                                text = "يتم تعبئة السعر ووحدة الحساب تلقائيًا",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = Color.White.copy(alpha = 0.85f)
+                            )
+                        }
+                        IconButton(
+                            onClick = onDismiss,
+                            modifier = Modifier
+                                .size(34.dp)
+                                .clip(CircleShape)
+                                .background(Color.White.copy(alpha = 0.16f))
+                        ) {
+                            Icon(Icons.Default.Close, contentDescription = "إغلاق", tint = Color.White, modifier = Modifier.size(18.dp))
+                        }
+                    }
+                }
+
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    OutlinedTextField(
+                        value = query,
+                        onValueChange = { query = it },
+                        placeholder = { Text("ابحث باسم الصنف أو الكود...") },
+                        leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+                        trailingIcon = {
+                            if (query.isNotEmpty()) {
+                                IconButton(onClick = { query = "" }) {
+                                    Icon(Icons.Default.Close, contentDescription = "مسح")
+                                }
+                            }
+                        },
+                        singleLine = true,
+                        shape = RoundedCornerShape(14.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    if (filtered.isEmpty()) {
+                        Surface(
+                            shape = RoundedCornerShape(16.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(
+                                text = if (products.isEmpty()) {
+                                    "لا توجد أصناف مسجلة بعد. يمكنك إضافة صنف جديد الآن أو الكتابة يدويًا في الفاتورة."
+                                } else {
+                                    "لا توجد أصناف مطابقة للبحث."
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(16.dp)
+                            )
+                        }
+                    } else {
+                        LazyColumn(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .weight(1f, fill = false)
+                                .heightIn(max = 320.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            items(filtered, key = { it.id }) { prod ->
+                                val unitCat = UnitMeasurement.categoryForUnit(prod.unitLabel)
+                                HesabatyCard(
+                                    onClick = { onSelect(prod) },
+                                    modifier = Modifier.fillMaxWidth()
                                 ) {
-                                    Column(modifier = Modifier.weight(1f)) {
-                                        Text(prod.name, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
-                                        Text(
-                                            text = buildString {
-                                                append("${prod.category} • ${prod.unitLabel}")
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                            Text(prod.name, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                                            Row(
+                                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                StatusBadge(
+                                                    label = "${unitCat.title} • ${prod.unitLabel}",
+                                                    textColor = PrimaryBlue,
+                                                    backgroundColor = PrimaryBlue.copy(alpha = 0.1f)
+                                                )
                                                 if (prod.trackStock) {
-                                                    append(" • متاح: ${MoneyFormatter.formatQuantity(prod.stockQuantityMilli)}")
+                                                    StatusBadge(
+                                                        label = "متاح: ${MoneyFormatter.formatQuantity(prod.stockQuantityMilli)}",
+                                                        textColor = extras.success,
+                                                        backgroundColor = extras.successContainer
+                                                    )
                                                 }
-                                            },
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
+                                            }
+                                        }
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Column(horizontalAlignment = Alignment.End) {
+                                            Text(
+                                                text = MoneyFormatter.formatEgp(prod.salePricePiasters, currency),
+                                                style = MaterialTheme.typography.titleSmall,
+                                                fontWeight = FontWeight.ExtraBold,
+                                                color = PrimaryBlue
+                                            )
+                                            Text(
+                                                text = "لكل ${prod.unitLabel}",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
                                     }
-                                    Text(
-                                        text = MoneyFormatter.formatEgp(prod.salePricePiasters, currency),
-                                        style = MaterialTheme.typography.titleSmall,
-                                        fontWeight = FontWeight.Bold,
-                                        color = MaterialTheme.colorScheme.primary
-                                    )
                                 }
                             }
                         }
                     }
-                }
-                OutlinedButton(
-                    onClick = onQuickAddNew,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text("إضافة صنف جديد الآن")
+
+                    Button(
+                        onClick = onQuickAddNew,
+                        shape = RoundedCornerShape(14.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = PrimaryBlue),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(48.dp)
+                    ) {
+                        Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("إضافة صنف جديد الآن", fontWeight = FontWeight.Bold)
+                    }
                 }
             }
-        },
-        confirmButton = {
-            TextButton(onClick = onDismiss) { Text("إغلاق") }
         }
-    )
+    }
 }

@@ -1,6 +1,10 @@
 package com.example.ui.screens
 
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -15,21 +19,29 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Inventory2
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.LockOpen
+import androidx.compose.material.icons.filled.Numbers
 import androidx.compose.material.icons.filled.Payments
 import androidx.compose.material.icons.filled.PictureAsPdf
+import androidx.compose.material.icons.filled.Scale
 import androidx.compose.material.icons.filled.Schedule
+import androidx.compose.material.icons.filled.Straighten
+import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -37,6 +49,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -56,6 +69,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.core.EgyptTime
 import com.example.core.MoneyFormatter
 import com.example.core.PdfInvoiceGenerator
+import com.example.core.UnitMeasureCategory
+import com.example.core.UnitMeasurement
 import com.example.core.WhatsAppHelper
 import com.example.data.local.DailyInvoiceStatuses
 import com.example.data.local.DailyWithdrawalItemEntity
@@ -494,19 +509,39 @@ private fun AddDailyItemDialog(
     onQuickAddProduct: (String, String, String, String, Long, Long, Long, Boolean, Long, String, (Boolean, String) -> Unit) -> Unit,
     onSave: (String, Long, Long, String, String?, (String) -> Unit) -> Unit
 ) {
+    val extras = HesabatyThemeExtras.colors
     var desc by remember { mutableStateOf("") }
     var priceText by remember { mutableStateOf("") }
     var qtyText by remember { mutableStateOf("1") }
+    var unitLabel by remember { mutableStateOf("قطعة") }
+    var subUnitLabel by remember { mutableStateOf("قطعة") }
+    var unitMenuExpanded by remember { mutableStateOf(false) }
     var notes by remember { mutableStateOf("") }
     var selectedProductId by remember { mutableStateOf<String?>(null) }
     var showPicker by remember { mutableStateOf(false) }
     var showQuickAdd by remember { mutableStateOf(false) }
     var err by remember { mutableStateOf<String?>(null) }
 
-    val previewTotal = remember(priceText, qtyText) {
+    val subOptions = remember(unitLabel) { UnitMeasurement.subUnitsFor(unitLabel) }
+    val activeSub = subOptions.firstOrNull { it.label == subUnitLabel } ?: subOptions.first()
+    val unitCategory = UnitMeasurement.categoryForUnit(unitLabel)
+    val unitIcon = when (unitCategory) {
+        UnitMeasureCategory.COUNT -> Icons.Default.Numbers
+        UnitMeasureCategory.WEIGHT -> Icons.Default.Scale
+        UnitMeasureCategory.MEASURE -> Icons.Default.Straighten
+    }
+    val presets = remember(unitLabel, activeSub.label) {
+        UnitMeasurement.quickPresetsFor(unitLabel, activeSub.label)
+    }
+
+    val primaryQtyMilli = remember(qtyText, activeSub) {
+        if (qtyText.isBlank() && activeSub.numerator == activeSub.denominator) 1000L
+        else (UnitMeasurement.parseInputToPrimaryMilli(qtyText, activeSub) ?: 0L)
+    }
+    val previewTotal = remember(priceText, primaryQtyMilli) {
         val p = MoneyFormatter.parseEgpToPiasters(priceText) ?: 0L
-        val q = MoneyFormatter.parseQuantityToMilli(qtyText) ?: 1000L
-        MoneyFormatter.calculateLineTotalPiasters(p, q)
+        if (p <= 0L || primaryQtyMilli <= 0L) 0L
+        else MoneyFormatter.calculateLineTotalPiasters(p, primaryQtyMilli)
     }
 
     AlertDialog(
@@ -515,7 +550,7 @@ private fun AddDailyItemDialog(
         text = {
             Column(
                 modifier = Modifier.verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
+                verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 OutlinedButton(
                     onClick = { showPicker = true },
@@ -528,6 +563,91 @@ private fun AddDailyItemDialog(
                         else "اختيار من الأصناف (${products.size})"
                     )
                 }
+
+                // Unit Selector + Sub-Unit Toggle Row
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box {
+                        Surface(
+                            shape = RoundedCornerShape(50),
+                            color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.65f),
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)),
+                            modifier = Modifier.clickable { unitMenuExpanded = true }
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                Icon(unitIcon, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(15.dp))
+                                Text(
+                                    text = "الوحدة: $unitLabel",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                                Icon(Icons.Default.ArrowDropDown, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
+                            }
+                        }
+                        DropdownMenu(
+                            expanded = unitMenuExpanded,
+                            onDismissRequest = { unitMenuExpanded = false }
+                        ) {
+                            UnitMeasurement.allQuickUnits.forEach { candidate ->
+                                DropdownMenuItem(
+                                    text = { Text("$candidate (${UnitMeasurement.categoryForUnit(candidate).title})") },
+                                    onClick = {
+                                        unitLabel = candidate
+                                        subUnitLabel = UnitMeasurement.subUnitsFor(candidate).first().label
+                                        unitMenuExpanded = false
+                                        err = null
+                                    }
+                                )
+                            }
+                        }
+                    }
+
+                    if (subOptions.size > 1) {
+                        val altSub = subOptions.first { it.label != activeSub.label }
+                        Surface(
+                            shape = RoundedCornerShape(50),
+                            color = if (activeSub.numerator != activeSub.denominator) extras.success.copy(alpha = 0.16f) else MaterialTheme.colorScheme.surface,
+                            border = BorderStroke(
+                                1.dp,
+                                if (activeSub.numerator != activeSub.denominator) extras.success.copy(alpha = 0.6f)
+                                else MaterialTheme.colorScheme.outline.copy(alpha = 0.4f)
+                            ),
+                            modifier = Modifier.clickable {
+                                qtyText = UnitMeasurement.convertQuantityBetweenSubUnits(qtyText, activeSub, altSub)
+                                subUnitLabel = altSub.label
+                                err = null
+                            }
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                Icon(
+                                    Icons.Default.SwapHoriz,
+                                    contentDescription = null,
+                                    tint = if (activeSub.numerator != activeSub.denominator) extras.success else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(14.dp)
+                                )
+                                Text(
+                                    text = "بالـ${activeSub.label}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = if (activeSub.numerator != activeSub.denominator) extras.success else MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    }
+                }
+
                 OutlinedTextField(
                     value = desc,
                     onValueChange = { desc = it; selectedProductId = null },
@@ -539,7 +659,7 @@ private fun AddDailyItemDialog(
                     OutlinedTextField(
                         value = priceText,
                         onValueChange = { priceText = it; err = null },
-                        label = { Text("السعر *") },
+                        label = { Text("${UnitMeasurement.priceFieldLabel(unitLabel)} *") },
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                         modifier = Modifier.weight(1f).testTag("daily_item_price")
@@ -547,18 +667,76 @@ private fun AddDailyItemDialog(
                     OutlinedTextField(
                         value = qtyText,
                         onValueChange = { qtyText = it; err = null },
-                        label = { Text("العدد *") },
+                        label = { Text("${UnitMeasurement.quantityFieldLabel(unitLabel, activeSub.label)} *") },
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                        modifier = Modifier.weight(0.8f).testTag("daily_item_qty")
+                        modifier = Modifier.weight(0.9f).testTag("daily_item_qty")
                     )
                 }
-                Text(
-                    text = "الإجمالي التلقائي: ${MoneyFormatter.formatEgp(previewTotal, currency)}",
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.primary
-                )
+
+                // Quick quantity/weight presets
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    val normQty = MoneyFormatter.normalizeDigits(qtyText)
+                    presets.forEach { (pLabel, pVal) ->
+                        val active = normQty == pVal
+                        Surface(
+                            shape = RoundedCornerShape(50),
+                            color = if (active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+                            modifier = Modifier.clickable {
+                                qtyText = pVal
+                                err = null
+                            }
+                        ) {
+                            Text(
+                                text = pLabel,
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.SemiBold,
+                                color = if (active) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+                            )
+                        }
+                    }
+                }
+
+                Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 10.dp, vertical = 7.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        val qtyFormula = if (primaryQtyMilli > 0L) {
+                            UnitMeasurement.formatPrimaryWithSubUnit(
+                                rawInput = qtyText.ifBlank { "1" },
+                                primaryUnit = unitLabel,
+                                subUnit = activeSub,
+                                primaryMilli = primaryQtyMilli
+                            )
+                        } else "0 $unitLabel"
+                        Text(
+                            text = qtyFormula,
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            text = "الإجمالي: ${MoneyFormatter.formatEgp(previewTotal, currency)}",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                }
+
                 OutlinedTextField(
                     value = notes,
                     onValueChange = { notes = it },
@@ -572,10 +750,18 @@ private fun AddDailyItemDialog(
             Button(
                 onClick = {
                     val p = MoneyFormatter.parseEgpToPiasters(priceText)
-                    val q = MoneyFormatter.parseQuantityToMilli(qtyText)
+                    val q = if (qtyText.isBlank() && activeSub.numerator == activeSub.denominator) 1000L
+                    else UnitMeasurement.parseInputToPrimaryMilli(qtyText, activeSub)
                     if (p == null || p <= 0L) { err = "أدخل سعرًا صحيحًا"; return@Button }
-                    if (q == null || q <= 0L) { err = "أدخل عددًا صحيحًا"; return@Button }
-                    onSave(desc, p, q, notes, selectedProductId) { err = it }
+                    if (q == null || q <= 0L) { err = "أدخل ${UnitMeasurement.quantityFieldLabel(unitLabel, activeSub.label)} بشكل صحيح"; return@Button }
+                    val finalDesc = UnitMeasurement.formatLineDescriptionWithUnit(
+                        rawDescription = desc,
+                        primaryUnit = unitLabel,
+                        subUnit = activeSub,
+                        rawQtyInput = qtyText.ifBlank { "1" },
+                        defaultFallbackDesc = "سحب يومي"
+                    )
+                    onSave(finalDesc, p, q, notes, selectedProductId) { err = it }
                 },
                 modifier = Modifier.testTag("daily_item_save_btn")
             ) { Text("تسجيل السحبة") }
@@ -593,6 +779,8 @@ private fun AddDailyItemDialog(
             onSelect = { prod ->
                 desc = prod.name
                 priceText = if (prod.salePricePiasters > 0L) MoneyFormatter.formatEgpPlainInput(prod.salePricePiasters) else ""
+                unitLabel = prod.unitLabel.ifBlank { "قطعة" }
+                subUnitLabel = UnitMeasurement.subUnitsFor(unitLabel).first().label
                 selectedProductId = prod.id
                 err = null
                 showPicker = false
@@ -607,12 +795,15 @@ private fun AddDailyItemDialog(
     if (showQuickAdd) {
         ProductFormDialog(
             initial = null,
+            currency = currency,
             onDismiss = { showQuickAdd = false },
             onSave = { name, cat, sku, unit, saleP, buyP, stockM, track, minM, pNotes, onErr ->
                 onQuickAddProduct(name, cat, sku, unit, saleP, buyP, stockM, track, minM, pNotes) { ok, idOrErr ->
                     if (ok) {
                         desc = name.trim()
                         priceText = if (saleP > 0L) MoneyFormatter.formatEgpPlainInput(saleP) else ""
+                        unitLabel = unit.ifBlank { "قطعة" }
+                        subUnitLabel = UnitMeasurement.subUnitsFor(unitLabel).first().label
                         selectedProductId = idOrErr
                         showQuickAdd = false
                     } else onErr(idOrErr)
