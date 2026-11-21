@@ -56,13 +56,14 @@ fun HesabatyTopBar(
     onBack: (() -> Unit)? = null,
     actions: @Composable RowScope.() -> Unit = {}
 ) {
+    val uiScale = HesabatyThemeExtras.uiScale
     TopAppBar(
         title = {
             Column {
                 Text(
                     text = title,
-                    style = MaterialTheme.typography.titleLarge,
-                    maxLines = 1,
+                    style = if (uiScale.isCompact) MaterialTheme.typography.titleMedium else MaterialTheme.typography.titleLarge,
+                    maxLines = 2,
                     overflow = TextOverflow.Ellipsis
                 )
                 if (!subtitle.isNullOrBlank()) {
@@ -105,6 +106,7 @@ fun HesabatyCard(
     content: @Composable ColumnScope.() -> Unit
 ) {
     val border = BorderStroke(1.dp, HesabatyThemeExtras.colors.cardBorder)
+    val cardPadding = HesabatyThemeExtras.uiScale.cardPadding
     if (onClick != null) {
         Card(
             onClick = onClick,
@@ -114,7 +116,7 @@ fun HesabatyCard(
             elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
             border = border
         ) {
-            Column(modifier = Modifier.padding(16.dp), content = content)
+            Column(modifier = Modifier.padding(cardPadding), content = content)
         }
     } else {
         Card(
@@ -124,7 +126,7 @@ fun HesabatyCard(
             elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
             border = border
         ) {
-            Column(modifier = Modifier.padding(16.dp), content = content)
+            Column(modifier = Modifier.padding(cardPadding), content = content)
         }
     }
 }
@@ -139,17 +141,19 @@ fun KpiMetricCard(
     modifier: Modifier = Modifier,
     onClick: (() -> Unit)? = null
 ) {
+    val uiScale = HesabatyThemeExtras.uiScale
+    val iconBoxSize = if (uiScale.isCompact) 32.dp else 38.dp
     HesabatyCard(
         modifier = modifier,
         onClick = onClick
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(10.dp)
+            horizontalArrangement = Arrangement.spacedBy(if (uiScale.isCompact) 7.dp else 10.dp)
         ) {
             Box(
                 modifier = Modifier
-                    .size(38.dp)
+                    .size(iconBoxSize)
                     .clip(RoundedCornerShape(10.dp))
                     .background(accentContainer),
                 contentAlignment = Alignment.Center
@@ -158,7 +162,7 @@ fun KpiMetricCard(
                     imageVector = icon,
                     contentDescription = title,
                     tint = accentColor,
-                    modifier = Modifier.size(20.dp)
+                    modifier = Modifier.size(if (uiScale.isCompact) 17.dp else 20.dp)
                 )
             }
             Text(
@@ -170,13 +174,13 @@ fun KpiMetricCard(
                 modifier = Modifier.weight(1f)
             )
         }
-        Spacer(modifier = Modifier.height(10.dp))
+        Spacer(modifier = Modifier.height(if (uiScale.isCompact) 6.dp else 10.dp))
         Text(
             text = value,
-            style = MaterialTheme.typography.titleLarge,
+            style = if (uiScale.isCompact) MaterialTheme.typography.titleMedium else MaterialTheme.typography.titleLarge,
             fontWeight = FontWeight.Bold,
             color = accentColor,
-            maxLines = 1,
+            maxLines = 2,
             overflow = TextOverflow.Ellipsis
         )
     }
@@ -192,12 +196,33 @@ fun QuickActionTile(
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val uiScale = HesabatyThemeExtras.uiScale
+    val tileMinHeight = when {
+        uiScale.isNarrow -> 86.dp
+        uiScale.isCompact -> 96.dp
+        else -> 110.dp
+    }
+    val outerCircle = when {
+        uiScale.isNarrow -> 42.dp
+        uiScale.isCompact -> 48.dp
+        else -> 56.dp
+    }
+    val innerCircle = when {
+        uiScale.isNarrow -> 32.dp
+        uiScale.isCompact -> 36.dp
+        else -> 42.dp
+    }
+    val iconSize = when {
+        uiScale.isNarrow -> 20.dp
+        uiScale.isCompact -> 23.dp
+        else -> 27.dp
+    }
     Surface(
         onClick = onClick,
         modifier = modifier
-            .heightIn(min = 114.dp)
+            .heightIn(min = tileMinHeight)
             .testTag(testTag),
-        shape = RoundedCornerShape(22.dp),
+        shape = RoundedCornerShape(if (uiScale.isCompact) 18.dp else 22.dp),
         color = MaterialTheme.colorScheme.surface,
         tonalElevation = 0.dp,
         shadowElevation = 4.dp,
@@ -206,20 +231,23 @@ fun QuickActionTile(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 8.dp, vertical = 14.dp),
+                .padding(
+                    horizontal = if (uiScale.isCompact) 4.dp else 8.dp,
+                    vertical = if (uiScale.isCompact) 10.dp else 13.dp
+                ),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center
         ) {
             Box(
                 modifier = Modifier
-                    .size(58.dp)
+                    .size(outerCircle)
                     .clip(CircleShape)
                     .background(accentContainer.copy(alpha = 0.72f)),
                 contentAlignment = Alignment.Center
             ) {
                 Box(
                     modifier = Modifier
-                        .size(44.dp)
+                        .size(innerCircle)
                         .clip(CircleShape)
                         .background(accentColor.copy(alpha = 0.14f)),
                     contentAlignment = Alignment.Center
@@ -228,14 +256,14 @@ fun QuickActionTile(
                         imageVector = icon,
                         contentDescription = label,
                         tint = accentColor,
-                        modifier = Modifier.size(28.dp)
+                        modifier = Modifier.size(iconSize)
                     )
                 }
             }
-            Spacer(modifier = Modifier.height(10.dp))
+            Spacer(modifier = Modifier.height(if (uiScale.isCompact) 6.dp else 9.dp))
             Text(
                 text = label,
-                style = MaterialTheme.typography.labelLarge,
+                style = if (uiScale.isCompact) MaterialTheme.typography.labelMedium else MaterialTheme.typography.labelLarge,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.onSurface,
                 textAlign = TextAlign.Center,
@@ -304,16 +332,17 @@ fun EmptyStateView(
     onAction: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
+    val uiScale = HesabatyThemeExtras.uiScale
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .padding(32.dp),
+            .padding(if (uiScale.isCompact) 18.dp else 32.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
         Box(
             modifier = Modifier
-                .size(64.dp)
+                .size(if (uiScale.isCompact) 52.dp else 64.dp)
                 .clip(CircleShape)
                 .background(MaterialTheme.colorScheme.primaryContainer),
             contentAlignment = Alignment.Center
@@ -322,10 +351,10 @@ fun EmptyStateView(
                 imageVector = icon,
                 contentDescription = title,
                 tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(32.dp)
+                modifier = Modifier.size(if (uiScale.isCompact) 26.dp else 32.dp)
             )
         }
-        Spacer(modifier = Modifier.height(14.dp))
+        Spacer(modifier = Modifier.height(if (uiScale.isCompact) 10.dp else 14.dp))
         Text(
             text = title,
             style = MaterialTheme.typography.titleMedium,
@@ -340,7 +369,7 @@ fun EmptyStateView(
             textAlign = TextAlign.Center
         )
         if (actionLabel != null && onAction != null) {
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(14.dp))
             Button(onClick = onAction) {
                 Text(actionLabel)
             }
@@ -384,26 +413,30 @@ fun SummaryStatPill(
     valueColor: Color,
     modifier: Modifier = Modifier
 ) {
+    val uiScale = HesabatyThemeExtras.uiScale
     Surface(
         modifier = modifier,
         shape = MaterialTheme.shapes.small,
         color = MaterialTheme.colorScheme.surfaceVariant
     ) {
         Column(
-            modifier = Modifier.padding(horizontal = 8.dp, vertical = 8.dp),
+            modifier = Modifier.padding(
+                horizontal = if (uiScale.isCompact) 6.dp else 8.dp,
+                vertical = if (uiScale.isCompact) 6.dp else 8.dp
+            ),
             horizontalAlignment = Alignment.Start
         ) {
             Text(
                 text = label,
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
+                maxLines = 2,
                 overflow = TextOverflow.Ellipsis
             )
             Spacer(modifier = Modifier.height(2.dp))
             Text(
                 text = value,
-                style = MaterialTheme.typography.titleSmall,
+                style = if (uiScale.isCompact) MaterialTheme.typography.labelLarge else MaterialTheme.typography.titleSmall,
                 fontWeight = FontWeight.Bold,
                 color = valueColor,
                 maxLines = 2,

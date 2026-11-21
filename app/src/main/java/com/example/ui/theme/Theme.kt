@@ -1,5 +1,6 @@
 package com.example.ui.theme
 
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Shapes
@@ -10,9 +11,22 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
+
+@Immutable
+data class HesabatyUiScale(
+    val isNarrow: Boolean = false,
+    val isCompact: Boolean = false,
+    val typeScale: Float = 1f,
+    val screenPadding: Dp = 16.dp,
+    val cardPadding: Dp = 16.dp,
+    val sectionSpacing: Dp = 12.dp
+)
 
 @Immutable
 data class HesabatyColors(
@@ -55,6 +69,7 @@ private val DarkSemanticColors = HesabatyColors(
 )
 
 val LocalHesabatyColors = staticCompositionLocalOf { LightSemanticColors }
+val LocalHesabatyUiScale = staticCompositionLocalOf { HesabatyUiScale() }
 
 private val LightColorScheme = lightColorScheme(
     primary = PrimaryBlue,
@@ -121,21 +136,62 @@ fun HesabatyTheme(
 ) {
     val colorScheme = if (darkTheme) DarkColorScheme else LightColorScheme
     val semanticColors = if (darkTheme) DarkSemanticColors else LightSemanticColors
+    val baseDensity = LocalDensity.current
+    val normalizedDensity = Density(
+        density = baseDensity.density,
+        fontScale = baseDensity.fontScale.coerceIn(0.88f, 1.12f)
+    )
 
-    CompositionLocalProvider(
-        LocalLayoutDirection provides LayoutDirection.Rtl,
-        LocalHesabatyColors provides semanticColors
-    ) {
-        MaterialTheme(
-            colorScheme = colorScheme,
-            typography = HesabatyTypography,
-            shapes = HesabatyShapes,
-            content = content
-        )
+    BoxWithConstraints(propagateMinConstraints = true) {
+        val uiScale = when {
+            maxWidth < 340.dp -> HesabatyUiScale(
+                isNarrow = true,
+                isCompact = true,
+                typeScale = 0.78f,
+                screenPadding = 10.dp,
+                cardPadding = 10.dp,
+                sectionSpacing = 8.dp
+            )
+            maxWidth < 372.dp -> HesabatyUiScale(
+                isNarrow = false,
+                isCompact = true,
+                typeScale = 0.85f,
+                screenPadding = 12.dp,
+                cardPadding = 12.dp,
+                sectionSpacing = 10.dp
+            )
+            maxWidth < 396.dp -> HesabatyUiScale(
+                isNarrow = false,
+                isCompact = true,
+                typeScale = 0.92f,
+                screenPadding = 14.dp,
+                cardPadding = 14.dp,
+                sectionSpacing = 11.dp
+            )
+            else -> HesabatyUiScale()
+        }
+        val typography = scaledHesabatyTypography(uiScale.typeScale)
+
+        CompositionLocalProvider(
+            LocalLayoutDirection provides LayoutDirection.Rtl,
+            LocalHesabatyColors provides semanticColors,
+            LocalHesabatyUiScale provides uiScale,
+            LocalDensity provides normalizedDensity
+        ) {
+            MaterialTheme(
+                colorScheme = colorScheme,
+                typography = typography,
+                shapes = HesabatyShapes,
+                content = content
+            )
+        }
     }
 }
 
 object HesabatyThemeExtras {
     val colors: HesabatyColors
         @Composable get() = LocalHesabatyColors.current
+
+    val uiScale: HesabatyUiScale
+        @Composable get() = LocalHesabatyUiScale.current
 }

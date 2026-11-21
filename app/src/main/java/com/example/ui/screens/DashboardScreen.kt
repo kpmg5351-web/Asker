@@ -14,10 +14,13 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
@@ -87,6 +90,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -101,6 +105,7 @@ import com.example.data.local.UserEntity
 import com.example.data.repository.AlertSeverity
 import com.example.data.repository.AppAlert
 import com.example.data.repository.CreditLimitBreach
+import com.example.data.repository.ReportType
 import com.example.data.repository.TrialStatusInfo
 import com.example.ui.components.HesabatyCard
 import com.example.ui.components.QuickActionTile
@@ -137,6 +142,9 @@ fun DashboardScreen(
     var showAccountMenuDialog by remember { mutableStateOf(false) }
     var searchQuery by rememberSaveable { mutableStateOf("") }
     val extras = HesabatyThemeExtras.colors
+    val uiScale = HesabatyThemeExtras.uiScale
+    val hPad = uiScale.screenPadding
+    val gridGap = if (uiScale.isCompact) 8.dp else 12.dp
 
     val urgentAlertsCount = alerts.count { it.severity == AlertSeverity.DANGER || it.severity == AlertSeverity.WARNING }
     val nonCreditLimitAlerts = remember(alerts) {
@@ -204,7 +212,7 @@ fun DashboardScreen(
 
         // 2. Floating Pill Search Bar (Live search across customers, suppliers & invoices)
         item {
-            Box(modifier = Modifier.padding(horizontal = 16.dp)) {
+            Box(modifier = Modifier.padding(horizontal = hPad)) {
                 DashboardSearchPill(
                     query = searchQuery,
                     onQueryChange = { searchQuery = it },
@@ -216,7 +224,7 @@ fun DashboardScreen(
         // Live Search Results Dropdown Card (only shown when typing)
         if (trimmedQuery.isNotEmpty()) {
             item {
-                Box(modifier = Modifier.padding(horizontal = 16.dp)) {
+                Box(modifier = Modifier.padding(horizontal = hPad)) {
                     HesabatyCard(modifier = Modifier.fillMaxWidth()) {
                         val hasAny = matchedCustomers.isNotEmpty() || matchedSuppliers.isNotEmpty() || matchedInvoices.isNotEmpty() || matchedPurchaseInvoices.isNotEmpty() || matchedProducts.isNotEmpty()
                         if (!hasAny) {
@@ -484,15 +492,15 @@ fun DashboardScreen(
             }
         }
 
-        // 6. Signature 3x3 Elevated Rounded-Square Operations Grid
+        // 6. Signature 3-Column Elevated Rounded-Square Operations Grid
         item {
             Column(
-                modifier = Modifier.padding(horizontal = 16.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
+                modifier = Modifier.padding(horizontal = hPad),
+                verticalArrangement = Arrangement.spacedBy(gridGap)
             ) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    horizontalArrangement = Arrangement.spacedBy(gridGap)
                 ) {
                     QuickActionTile(
                         label = "تسجيل بيع",
@@ -524,7 +532,7 @@ fun DashboardScreen(
                 }
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    horizontalArrangement = Arrangement.spacedBy(gridGap)
                 ) {
                     QuickActionTile(
                         label = "العملاء",
@@ -556,7 +564,7 @@ fun DashboardScreen(
                 }
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    horizontalArrangement = Arrangement.spacedBy(gridGap)
                 ) {
                     QuickActionTile(
                         label = "الأصناف",
@@ -588,7 +596,7 @@ fun DashboardScreen(
                 }
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    horizontalArrangement = Arrangement.spacedBy(gridGap)
                 ) {
                     QuickActionTile(
                         label = "فاتورة شراء",
@@ -822,11 +830,24 @@ private fun CurvedDashboardHeader(
             )
         }
 
+        val uiScale = HesabatyThemeExtras.uiScale
+        val headerActionSize = when {
+            uiScale.isNarrow -> 32.dp
+            uiScale.isCompact -> 34.dp
+            else -> 38.dp
+        }
+        val headerIconSize = if (uiScale.isCompact) 17.dp else 19.dp
+
         Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .statusBarsPadding()
-                .padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 28.dp),
+                .padding(
+                    start = uiScale.screenPadding,
+                    end = uiScale.screenPadding,
+                    top = if (uiScale.isCompact) 8.dp else 12.dp,
+                    bottom = if (uiScale.isCompact) 20.dp else 28.dp
+                ),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             // Top Row: Greeting (RTL Start) | Centered Brand Logo | Notifications + Theme (RTL End)
@@ -839,44 +860,51 @@ private fun CurvedDashboardHeader(
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     modifier = Modifier
+                        .widthIn(max = if (uiScale.isCompact) 66.dp else 96.dp)
                         .clip(RoundedCornerShape(12.dp))
                         .clickable(onClick = onOpenAccountMenu)
-                        .padding(horizontal = 4.dp, vertical = 2.dp)
+                        .padding(horizontal = 2.dp, vertical = 2.dp)
                         .testTag("dashboard_user_profile_button")
                 ) {
                     Surface(
                         shape = CircleShape,
                         color = Color.White.copy(alpha = 0.16f),
                         border = BorderStroke(1.2.dp, Color.White.copy(alpha = 0.65f)),
-                        modifier = Modifier.size(38.dp)
+                        modifier = Modifier.size(headerActionSize)
                     ) {
                         Box(contentAlignment = Alignment.Center) {
                             Icon(
                                 imageVector = Icons.Default.Person,
                                 contentDescription = "الحساب وتسجيل الخروج",
                                 tint = Color.White,
-                                modifier = Modifier.size(20.dp)
+                                modifier = Modifier.size(headerIconSize)
                             )
                         }
                     }
-                    Spacer(modifier = Modifier.height(4.dp))
+                    Spacer(modifier = Modifier.height(3.dp))
                     Text(
                         text = "أهلاً $firstName",
-                        style = MaterialTheme.typography.labelMedium,
+                        style = if (uiScale.isCompact) MaterialTheme.typography.labelSmall else MaterialTheme.typography.labelMedium,
                         fontWeight = FontWeight.Bold,
                         color = Color.White,
-                        maxLines = 1
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
 
                 // Center: Hesabaty Logo + Title
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(horizontal = 4.dp)
+                ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Surface(
-                            shape = RoundedCornerShape(12.dp),
+                            shape = RoundedCornerShape(if (uiScale.isCompact) 9.dp else 12.dp),
                             color = Color.White,
                             shadowElevation = 4.dp,
-                            modifier = Modifier.size(34.dp)
+                            modifier = Modifier.size(if (uiScale.isCompact) 28.dp else 34.dp)
                         ) {
                             Image(
                                 painter = painterResource(id = R.drawable.ic_hesabaty_brand),
@@ -885,33 +913,37 @@ private fun CurvedDashboardHeader(
                                 modifier = Modifier.fillMaxSize()
                             )
                         }
-                        Spacer(modifier = Modifier.width(6.dp))
+                        Spacer(modifier = Modifier.width(5.dp))
                         Text(
                             text = "حساباتي",
-                            style = MaterialTheme.typography.titleLarge,
+                            style = if (uiScale.isCompact) MaterialTheme.typography.titleMedium else MaterialTheme.typography.titleLarge,
                             fontWeight = FontWeight.ExtraBold,
-                            color = AccentGold
+                            color = AccentGold,
+                            maxLines = 1
                         )
                     }
-                    Text(
-                        text = "H E S A B A T Y",
-                        style = MaterialTheme.typography.labelSmall.copy(
-                            letterSpacing = 2.2.sp,
-                            fontWeight = FontWeight.SemiBold
-                        ),
-                        color = Color.White.copy(alpha = 0.9f)
-                    )
+                    if (!uiScale.isNarrow) {
+                        Text(
+                            text = "H E S A B A T Y",
+                            style = MaterialTheme.typography.labelSmall.copy(
+                                letterSpacing = if (uiScale.isCompact) 1.2.sp else 2.2.sp,
+                                fontWeight = FontWeight.SemiBold
+                            ),
+                            color = Color.White.copy(alpha = 0.9f),
+                            maxLines = 1
+                        )
+                    }
                 }
 
                 // RTL End (Left): Notifications, Theme Toggle & Quick Logout
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    horizontalArrangement = Arrangement.spacedBy(if (uiScale.isCompact) 3.dp else 4.dp)
                 ) {
                     IconButton(
                         onClick = onOpenAlerts,
                         modifier = Modifier
-                            .size(38.dp)
+                            .size(headerActionSize)
                             .clip(CircleShape)
                             .background(Color.White.copy(alpha = 0.14f))
                             .testTag("dashboard_alerts_button")
@@ -932,7 +964,7 @@ private fun CurvedDashboardHeader(
                                 imageVector = Icons.Default.Notifications,
                                 contentDescription = "التنبيهات",
                                 tint = Color.White,
-                                modifier = Modifier.size(19.dp)
+                                modifier = Modifier.size(headerIconSize)
                             )
                         }
                     }
@@ -940,7 +972,7 @@ private fun CurvedDashboardHeader(
                     IconButton(
                         onClick = onToggleDarkMode,
                         modifier = Modifier
-                            .size(38.dp)
+                            .size(headerActionSize)
                             .clip(CircleShape)
                             .background(Color.White.copy(alpha = 0.14f))
                             .testTag("dashboard_theme_toggle")
@@ -949,14 +981,14 @@ private fun CurvedDashboardHeader(
                             imageVector = if (isDarkMode) Icons.Default.LightMode else Icons.Default.DarkMode,
                             contentDescription = "تبديل المظهر",
                             tint = Color.White,
-                            modifier = Modifier.size(19.dp)
+                            modifier = Modifier.size(headerIconSize)
                         )
                     }
 
                     IconButton(
                         onClick = onLogoutClick,
                         modifier = Modifier
-                            .size(38.dp)
+                            .size(headerActionSize)
                             .clip(CircleShape)
                             .background(Color(0x33DC2626))
                             .testTag("dashboard_logout_button")
@@ -965,44 +997,46 @@ private fun CurvedDashboardHeader(
                             imageVector = Icons.AutoMirrored.Filled.Logout,
                             contentDescription = "تسجيل الخروج",
                             tint = Color.White,
-                            modifier = Modifier.size(19.dp)
+                            modifier = Modifier.size(headerIconSize)
                         )
                     }
                 }
             }
 
-            Spacer(modifier = Modifier.height(10.dp))
+            Spacer(modifier = Modifier.height(if (uiScale.isCompact) 6.dp else 10.dp))
 
-            // Shop & Date Selector Row (mirrors "حدد موقعك لعرض الخدمات المتاحة" in reference)
+            // Shop & Date Selector Row
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.Center,
                 modifier = Modifier
                     .clip(RoundedCornerShape(50))
                     .clickable(onClick = onOpenShopSettings)
-                    .padding(horizontal = 12.dp, vertical = 4.dp)
+                    .padding(horizontal = 10.dp, vertical = 4.dp)
             ) {
                 Icon(
                     imageVector = Icons.Default.Storefront,
                     contentDescription = null,
                     tint = AccentGold,
-                    modifier = Modifier.size(18.dp)
+                    modifier = Modifier.size(16.dp)
                 )
-                Spacer(modifier = Modifier.width(6.dp))
+                Spacer(modifier = Modifier.width(5.dp))
                 Text(
                     text = "${tenant.shopName}  •  ${EgyptTime.formatDateArabic(EgyptTime.nowMillis())}",
-                    style = MaterialTheme.typography.labelMedium,
+                    style = if (uiScale.isCompact) MaterialTheme.typography.labelSmall else MaterialTheme.typography.labelMedium,
                     fontWeight = FontWeight.SemiBold,
                     color = Color.White,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
+                    textAlign = TextAlign.Center,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false)
                 )
                 Spacer(modifier = Modifier.width(4.dp))
                 Icon(
                     imageVector = Icons.Default.KeyboardArrowDown,
                     contentDescription = null,
                     tint = AccentGold,
-                    modifier = Modifier.size(18.dp)
+                    modifier = Modifier.size(16.dp)
                 )
             }
         }
@@ -1018,6 +1052,7 @@ private fun DashboardSearchPill(
     onQueryChange: (String) -> Unit,
     isDarkMode: Boolean
 ) {
+    val uiScale = HesabatyThemeExtras.uiScale
     Surface(
         shape = RoundedCornerShape(50),
         color = if (isDarkMode) Color(0xFF152238) else Color.White,
@@ -1025,22 +1060,22 @@ private fun DashboardSearchPill(
         border = BorderStroke(1.dp, HesabatyThemeExtras.colors.cardBorder.copy(alpha = 0.65f)),
         modifier = Modifier
             .fillMaxWidth()
-            .height(52.dp)
+            .heightIn(min = if (uiScale.isCompact) 46.dp else 52.dp)
             .testTag("dashboard_search_bar")
     ) {
         Row(
             modifier = Modifier
-                .fillMaxSize()
-                .padding(horizontal = 18.dp),
+                .fillMaxWidth()
+                .padding(horizontal = if (uiScale.isCompact) 14.dp else 18.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Icon(
                 imageVector = Icons.Default.Search,
                 contentDescription = "بحث",
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.size(22.dp)
+                modifier = Modifier.size(if (uiScale.isCompact) 19.dp else 22.dp)
             )
-            Spacer(modifier = Modifier.width(10.dp))
+            Spacer(modifier = Modifier.width(8.dp))
             Box(
                 modifier = Modifier.weight(1f),
                 contentAlignment = Alignment.CenterStart
@@ -1048,7 +1083,7 @@ private fun DashboardSearchPill(
                 if (query.isEmpty()) {
                     Text(
                         text = "ابحث عن عميل أو مورد أو رقم فاتورة...",
-                        style = MaterialTheme.typography.bodyMedium,
+                        style = if (uiScale.isCompact) MaterialTheme.typography.bodySmall else MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
@@ -1060,7 +1095,7 @@ private fun DashboardSearchPill(
                     singleLine = true,
                     textStyle = TextStyle(
                         color = MaterialTheme.colorScheme.onSurface,
-                        fontSize = 15.sp,
+                        fontSize = if (uiScale.isCompact) 13.sp else 15.sp,
                         fontWeight = FontWeight.Medium
                     ),
                     cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
@@ -1130,6 +1165,7 @@ private fun DashboardHeroCarousel(
     onNavigate: (String) -> Unit
 ) {
     val pagerState = rememberPagerState(pageCount = { 3 })
+    val uiScale = HesabatyThemeExtras.uiScale
 
     Column(
         modifier = Modifier.fillMaxWidth(),
@@ -1137,9 +1173,12 @@ private fun DashboardHeroCarousel(
     ) {
         HorizontalPager(
             state = pagerState,
-            contentPadding = PaddingValues(horizontal = 16.dp),
-            pageSpacing = 12.dp,
-            modifier = Modifier.fillMaxWidth()
+            contentPadding = PaddingValues(horizontal = uiScale.screenPadding),
+            pageSpacing = if (uiScale.isCompact) 10.dp else 12.dp,
+            verticalAlignment = Alignment.Top,
+            modifier = Modifier
+                .fillMaxWidth()
+                .wrapContentHeight()
         ) { page ->
             when (page) {
                 0 -> HeroBannerSlideOverview(onNavigate = onNavigate, isDarkMode = isDarkMode)
@@ -1177,12 +1216,14 @@ private fun HeroBannerSlideOverview(
     onNavigate: (String) -> Unit,
     isDarkMode: Boolean
 ) {
+    val uiScale = HesabatyThemeExtras.uiScale
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .height(176.dp)
-            .shadow(elevation = 6.dp, shape = RoundedCornerShape(24.dp))
-            .clip(RoundedCornerShape(24.dp))
+            .heightIn(min = if (uiScale.isCompact) 142.dp else 172.dp)
+            .wrapContentHeight()
+            .shadow(elevation = 6.dp, shape = RoundedCornerShape(if (uiScale.isCompact) 20.dp else 24.dp))
+            .clip(RoundedCornerShape(if (uiScale.isCompact) 20.dp else 24.dp))
             .background(
                 Brush.horizontalGradient(
                     colors = if (isDarkMode) {
@@ -1194,7 +1235,7 @@ private fun HeroBannerSlideOverview(
             )
     ) {
         // Subtle radial light behind 3D accounting hero graphic on left side (RTL end)
-        Canvas(modifier = Modifier.fillMaxSize()) {
+        Canvas(modifier = Modifier.matchParentSize()) {
             drawCircle(
                 color = Color.White.copy(alpha = 0.14f),
                 radius = size.height * 0.72f,
@@ -1204,40 +1245,36 @@ private fun HeroBannerSlideOverview(
 
         Column(
             modifier = Modifier
-                .fillMaxSize()
-                .padding(horizontal = 16.dp, vertical = 14.dp),
-            verticalArrangement = Arrangement.SpaceBetween
+                .fillMaxWidth()
+                .padding(horizontal = if (uiScale.isCompact) 12.dp else 16.dp, vertical = if (uiScale.isCompact) 12.dp else 14.dp),
+            verticalArrangement = Arrangement.spacedBy(if (uiScale.isCompact) 10.dp else 12.dp)
         ) {
             Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .weight(1f),
+                modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 // Right (RTL Start): Headline + Golden curved underline stroke
                 Column(
-                    modifier = Modifier.weight(1.15f),
+                    modifier = Modifier.weight(1.2f),
                     verticalArrangement = Arrangement.Center
                 ) {
                     Text(
                         text = "كل حسابات محلك",
-                        style = MaterialTheme.typography.titleLarge,
+                        style = if (uiScale.isCompact) MaterialTheme.typography.titleMedium else MaterialTheme.typography.titleLarge,
                         fontWeight = FontWeight.ExtraBold,
-                        color = Color.White,
-                        lineHeight = 26.sp
+                        color = Color.White
                     )
                     Text(
                         text = "في مكان واحد",
-                        style = MaterialTheme.typography.titleLarge,
+                        style = if (uiScale.isCompact) MaterialTheme.typography.titleMedium else MaterialTheme.typography.titleLarge,
                         fontWeight = FontWeight.ExtraBold,
-                        color = Color.White,
-                        lineHeight = 26.sp
+                        color = Color.White
                     )
                     Spacer(modifier = Modifier.height(6.dp))
                     Canvas(
                         modifier = Modifier
-                            .width(105.dp)
-                            .height(10.dp)
+                            .width(if (uiScale.isCompact) 86.dp else 105.dp)
+                            .height(8.dp)
                     ) {
                         val curve = Path().apply {
                             moveTo(0f, size.height * 0.8f)
@@ -1246,7 +1283,7 @@ private fun HeroBannerSlideOverview(
                         drawPath(
                             path = curve,
                             color = AccentGold,
-                            style = Stroke(width = 4.dp.toPx(), cap = StrokeCap.Round)
+                            style = Stroke(width = 3.5.dp.toPx(), cap = StrokeCap.Round)
                         )
                     }
                 }
@@ -1257,15 +1294,15 @@ private fun HeroBannerSlideOverview(
                     contentDescription = "نظام حساباتي المحاسبي",
                     contentScale = ContentScale.Fit,
                     modifier = Modifier
-                        .weight(0.95f)
-                        .height(106.dp)
+                        .weight(0.85f)
+                        .height(if (uiScale.isCompact) 76.dp else 102.dp)
                 )
             }
 
-            // Bottom 3 Crisp White Quick-Launch Pill Chips (mirroring reference chips)
+            // Bottom 3 Crisp White Quick-Launch Pill Chips
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                horizontalArrangement = Arrangement.spacedBy(if (uiScale.isCompact) 6.dp else 8.dp)
             ) {
                 BannerActionChip(
                     label = "بيع جديد",
@@ -1294,22 +1331,24 @@ private fun HeroBannerSlideOverview(
 private fun HeroBannerSlideAccountsShortcut(
     onNavigate: (String) -> Unit
 ) {
+    val uiScale = HesabatyThemeExtras.uiScale
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .height(176.dp)
-            .shadow(elevation = 6.dp, shape = RoundedCornerShape(24.dp))
-            .clip(RoundedCornerShape(24.dp))
+            .heightIn(min = if (uiScale.isCompact) 142.dp else 172.dp)
+            .wrapContentHeight()
+            .shadow(elevation = 6.dp, shape = RoundedCornerShape(if (uiScale.isCompact) 20.dp else 24.dp))
+            .clip(RoundedCornerShape(if (uiScale.isCompact) 20.dp else 24.dp))
             .background(
                 Brush.horizontalGradient(
                     colors = listOf(Color(0xFF065F46), Color(0xFF047857), Color(0xFF0D9488))
                 )
             )
-            .padding(16.dp)
+            .padding(if (uiScale.isCompact) 12.dp else 16.dp)
     ) {
         Column(
-            modifier = Modifier.fillMaxSize(),
-            verticalArrangement = Arrangement.SpaceBetween
+            modifier = Modifier.fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(if (uiScale.isCompact) 10.dp else 14.dp)
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -1319,7 +1358,7 @@ private fun HeroBannerSlideAccountsShortcut(
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = "إدارة العملاء والموردين",
-                        style = MaterialTheme.typography.titleLarge,
+                        style = if (uiScale.isCompact) MaterialTheme.typography.titleMedium else MaterialTheme.typography.titleLarge,
                         fontWeight = FontWeight.ExtraBold,
                         color = Color.White
                     )
@@ -1334,14 +1373,14 @@ private fun HeroBannerSlideAccountsShortcut(
                 Surface(
                     shape = CircleShape,
                     color = Color.White.copy(alpha = 0.16f),
-                    modifier = Modifier.size(46.dp)
+                    modifier = Modifier.size(if (uiScale.isCompact) 38.dp else 46.dp)
                 ) {
                     Box(contentAlignment = Alignment.Center) {
                         Icon(
                             imageVector = Icons.Default.Groups,
                             contentDescription = null,
                             tint = AccentGold,
-                            modifier = Modifier.size(24.dp)
+                            modifier = Modifier.size(if (uiScale.isCompact) 20.dp else 24.dp)
                         )
                     }
                 }
@@ -1349,7 +1388,7 @@ private fun HeroBannerSlideAccountsShortcut(
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                horizontalArrangement = Arrangement.spacedBy(if (uiScale.isCompact) 6.dp else 8.dp)
             ) {
                 BannerActionChip(
                     label = "العملاء",
@@ -1378,22 +1417,24 @@ private fun HeroBannerSlideAccountsShortcut(
 private fun HeroBannerSlideReportsShortcut(
     onNavigate: (String) -> Unit
 ) {
+    val uiScale = HesabatyThemeExtras.uiScale
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .height(176.dp)
-            .shadow(elevation = 6.dp, shape = RoundedCornerShape(24.dp))
-            .clip(RoundedCornerShape(24.dp))
+            .heightIn(min = if (uiScale.isCompact) 142.dp else 172.dp)
+            .wrapContentHeight()
+            .shadow(elevation = 6.dp, shape = RoundedCornerShape(if (uiScale.isCompact) 20.dp else 24.dp))
+            .clip(RoundedCornerShape(if (uiScale.isCompact) 20.dp else 24.dp))
             .background(
                 Brush.horizontalGradient(
                     colors = listOf(Color(0xFF1E3A8A), Color(0xFF1D4ED8), Color(0xFF2563EB))
                 )
             )
-            .padding(16.dp)
+            .padding(if (uiScale.isCompact) 12.dp else 16.dp)
     ) {
         Column(
-            modifier = Modifier.fillMaxSize(),
-            verticalArrangement = Arrangement.SpaceBetween
+            modifier = Modifier.fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(if (uiScale.isCompact) 10.dp else 14.dp)
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -1403,13 +1444,13 @@ private fun HeroBannerSlideReportsShortcut(
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = "التقارير والنسخ الاحتياطي",
-                        style = MaterialTheme.typography.titleLarge,
+                        style = if (uiScale.isCompact) MaterialTheme.typography.titleMedium else MaterialTheme.typography.titleLarge,
                         fontWeight = FontWeight.ExtraBold,
                         color = Color.White
                     )
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        text = "ملخص حسابات المحل و13 تقريرًا ماليًا في قسم مستقل وآمن تمامًا",
+                        text = "ملخص حسابات المحل و${ReportType.entries.size} تقريرًا ماليًا في قسم مستقل وآمن تمامًا",
                         style = MaterialTheme.typography.bodySmall,
                         color = Color.White.copy(alpha = 0.9f)
                     )
@@ -1418,14 +1459,14 @@ private fun HeroBannerSlideReportsShortcut(
                 Surface(
                     shape = CircleShape,
                     color = Color.White.copy(alpha = 0.16f),
-                    modifier = Modifier.size(46.dp)
+                    modifier = Modifier.size(if (uiScale.isCompact) 38.dp else 46.dp)
                 ) {
                     Box(contentAlignment = Alignment.Center) {
                         Icon(
                             imageVector = Icons.Default.Assessment,
                             contentDescription = null,
                             tint = AccentGold,
-                            modifier = Modifier.size(24.dp)
+                            modifier = Modifier.size(if (uiScale.isCompact) 20.dp else 24.dp)
                         )
                     }
                 }
@@ -1433,7 +1474,7 @@ private fun HeroBannerSlideReportsShortcut(
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                horizontalArrangement = Arrangement.spacedBy(if (uiScale.isCompact) 6.dp else 8.dp)
             ) {
                 BannerActionChip(
                     label = "قسم التقارير",
@@ -1459,15 +1500,16 @@ private fun BannerActionChip(
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val uiScale = HesabatyThemeExtras.uiScale
     Surface(
         onClick = onClick,
         shape = RoundedCornerShape(50),
         color = Color.White,
         shadowElevation = 2.dp,
-        modifier = modifier.height(34.dp)
+        modifier = modifier.heightIn(min = 34.dp)
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 8.dp),
+            modifier = Modifier.padding(horizontal = if (uiScale.isCompact) 5.dp else 8.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.Center
         ) {
@@ -1475,15 +1517,16 @@ private fun BannerActionChip(
                 imageVector = icon,
                 contentDescription = null,
                 tint = PrimaryDarkBlue,
-                modifier = Modifier.size(15.dp)
+                modifier = Modifier.size(if (uiScale.isCompact) 13.dp else 15.dp)
             )
-            Spacer(modifier = Modifier.width(4.dp))
+            Spacer(modifier = Modifier.width(3.dp))
             Text(
                 text = label,
                 style = MaterialTheme.typography.labelSmall,
                 fontWeight = FontWeight.Bold,
                 color = PrimaryDarkBlue,
-                maxLines = 1,
+                textAlign = TextAlign.Center,
+                maxLines = 2,
                 overflow = TextOverflow.Ellipsis
             )
         }
@@ -1626,9 +1669,9 @@ private fun CreditLimitBreachRow(
             Button(
                 onClick = onCollectCustomer,
                 colors = ButtonDefaults.buttonColors(containerColor = extras.success),
-                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
                 modifier = Modifier
-                    .height(38.dp)
+                    .heightIn(min = 36.dp)
                     .testTag("credit_limit_collect_${breach.customer.id}")
             ) {
                 Text(

@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -45,6 +46,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.core.EgyptTime
@@ -202,12 +204,13 @@ fun SupplierDetailScreen(
             return@Scaffold
         }
 
+        val uiScale = HesabatyThemeExtras.uiScale
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding),
-            contentPadding = PaddingValues(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+            contentPadding = PaddingValues(uiScale.screenPadding),
+            verticalArrangement = Arrangement.spacedBy(uiScale.sectionSpacing)
         ) {
             item {
                 HesabatyCard(modifier = Modifier.fillMaxWidth()) {
@@ -257,26 +260,28 @@ fun SupplierDetailScreen(
                 ) {
                     Button(
                         onClick = { txDialogMode = SupplierTxTypes.DEBT_ADD },
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 10.dp),
                         modifier = Modifier
                             .weight(1f)
-                            .height(48.dp)
+                            .heightIn(min = 48.dp)
                             .testTag("supplier_add_debt_btn")
                     ) {
                         Icon(Icons.Default.AddCircle, contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(modifier = Modifier.width(6.dp))
-                        Text("إضافة مديونية")
+                        Text("إضافة مديونية", textAlign = TextAlign.Center)
                     }
                     Button(
                         onClick = { txDialogMode = SupplierTxTypes.PAYMENT_PARTIAL },
                         colors = ButtonDefaults.buttonColors(containerColor = extras.success),
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 10.dp),
                         modifier = Modifier
                             .weight(1f)
-                            .height(48.dp)
+                            .heightIn(min = 48.dp)
                             .testTag("supplier_pay_btn")
                     ) {
                         Icon(Icons.Default.Payments, contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(modifier = Modifier.width(6.dp))
-                        Text("تسجيل دفعة")
+                        Text("تسجيل دفعة", textAlign = TextAlign.Center)
                     }
                 }
                 Spacer(modifier = Modifier.height(8.dp))
@@ -287,16 +292,18 @@ fun SupplierDetailScreen(
                     if (s.currentBalancePiasters > 0L) {
                         OutlinedButton(
                             onClick = { txDialogMode = SupplierTxTypes.PAYMENT_FULL },
-                            modifier = Modifier.weight(1f)
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 10.dp),
+                            modifier = Modifier.weight(1f).heightIn(min = 44.dp)
                         ) {
-                            Text("سداد كامل الرصيد")
+                            Text("سداد كامل الرصيد", textAlign = TextAlign.Center)
                         }
                     }
                     OutlinedButton(
                         onClick = { txDialogMode = SupplierTxTypes.ADJUSTMENT },
-                        modifier = Modifier.weight(1f)
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 10.dp),
+                        modifier = Modifier.weight(1f).heightIn(min = 44.dp)
                     ) {
-                        Text("تسوية مراجعة")
+                        Text("تسوية مراجعة", textAlign = TextAlign.Center)
                     }
                 }
                 Spacer(modifier = Modifier.height(8.dp))
@@ -304,22 +311,22 @@ fun SupplierDetailScreen(
                     onClick = onCreatePurchase,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(48.dp)
+                        .heightIn(min = 48.dp)
                         .testTag("supplier_new_purchase_btn")
                 ) {
                     Icon(Icons.Default.Receipt, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text("فاتورة شراء جديدة من هذا المورد", fontWeight = FontWeight.Bold)
+                    Text("فاتورة شراء جديدة من هذا المورد", fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
                 }
                 Spacer(modifier = Modifier.height(8.dp))
                 Button(
                     onClick = { shareSupplierStatementImageViaWhatsApp() },
                     colors = ButtonDefaults.buttonColors(containerColor = extras.success),
-                    modifier = Modifier.fillMaxWidth().height(46.dp).testTag("supplier_whatsapp_statement_btn")
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 46.dp).testTag("supplier_whatsapp_statement_btn")
                 ) {
                     Icon(Icons.AutoMirrored.Filled.Send, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text("إرسال كشف حساب المورد عبر واتساب (صورة فاتورة)", fontWeight = FontWeight.Bold)
+                    Text("إرسال كشف حساب المورد عبر واتساب (صورة فاتورة)", fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
                 }
             }
 

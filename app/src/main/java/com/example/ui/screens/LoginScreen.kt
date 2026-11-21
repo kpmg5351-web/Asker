@@ -34,6 +34,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
@@ -143,6 +144,7 @@ fun LoginScreen(
     onActivateWithToken: (rawToken: String, onError: (String) -> Unit) -> Unit = { _, _ -> }
 ) {
     val context = LocalContext.current
+    val uiScale = HesabatyThemeExtras.uiScale
     var username by rememberSaveable { mutableStateOf(savedCredentials.username) }
     var password by rememberSaveable { mutableStateOf(savedCredentials.password) }
     var rememberMe by rememberSaveable { mutableStateOf(savedCredentials.rememberMe) }
@@ -207,7 +209,12 @@ fun LoginScreen(
                 modifier = Modifier
                     .fillMaxSize()
                     .verticalScroll(rememberScrollState())
-                    .padding(start = 20.dp, end = 20.dp, top = 56.dp, bottom = 18.dp),
+                    .padding(
+                        start = if (uiScale.isCompact) 14.dp else 20.dp,
+                        end = if (uiScale.isCompact) 14.dp else 20.dp,
+                        top = if (uiScale.isCompact) 48.dp else 56.dp,
+                        bottom = 16.dp
+                    ),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Center
             ) {
@@ -215,14 +222,14 @@ fun LoginScreen(
                     modifier = Modifier.widthIn(max = 440.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                    Spacer(modifier = Modifier.height(6.dp))
+                    Spacer(modifier = Modifier.height(4.dp))
 
                     // App Brand Icon
                     Surface(
-                        shape = RoundedCornerShape(22.dp),
+                        shape = RoundedCornerShape(if (uiScale.isCompact) 18.dp else 22.dp),
                         shadowElevation = 10.dp,
                         color = HesabatyBlue,
-                        modifier = Modifier.size(78.dp)
+                        modifier = Modifier.size(if (uiScale.isCompact) 62.dp else 78.dp)
                     ) {
                         Image(
                             painter = painterResource(id = R.drawable.ic_hesabaty_brand),
@@ -232,12 +239,12 @@ fun LoginScreen(
                         )
                     }
 
-                    Spacer(modifier = Modifier.height(12.dp))
+                    Spacer(modifier = Modifier.height(if (uiScale.isCompact) 8.dp else 12.dp))
 
                     // App Brand Title
                     Text(
                         text = "حساباتي | HESABATY",
-                        style = MaterialTheme.typography.headlineMedium.copy(
+                        style = (if (uiScale.isCompact) MaterialTheme.typography.headlineSmall else MaterialTheme.typography.headlineMedium).copy(
                             fontWeight = FontWeight.ExtraBold,
                             letterSpacing = 0.2.sp
                         ),
@@ -249,7 +256,7 @@ fun LoginScreen(
 
                     // Subtitle flanked by subtle divider lines
                     Row(
-                        modifier = Modifier.fillMaxWidth(0.92f),
+                        modifier = Modifier.fillMaxWidth(0.95f),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.Center
                     ) {
@@ -264,7 +271,7 @@ fun LoginScreen(
                             fontWeight = FontWeight.SemiBold,
                             color = if (isDarkMode) Color(0xFF93B4E0) else Color(0xFF26539C),
                             textAlign = TextAlign.Center,
-                            modifier = Modifier.padding(horizontal = 10.dp)
+                            modifier = Modifier.padding(horizontal = 8.dp)
                         )
                         HorizontalDivider(
                             modifier = Modifier.weight(1f),
@@ -273,7 +280,7 @@ fun LoginScreen(
                         )
                     }
 
-                    Spacer(modifier = Modifier.height(10.dp))
+                    Spacer(modifier = Modifier.height(if (uiScale.isCompact) 6.dp else 10.dp))
 
                     // 3D Accounting Illustration (Calculator, Ledger, Gold Coins & Chart)
                     Image(
@@ -281,15 +288,15 @@ fun LoginScreen(
                         contentDescription = "توضيح النظام المحاسبي",
                         contentScale = ContentScale.Fit,
                         modifier = Modifier
-                            .fillMaxWidth(0.68f)
-                            .height(122.dp)
+                            .fillMaxWidth(if (uiScale.isCompact) 0.54f else 0.68f)
+                            .height(if (uiScale.isCompact) 86.dp else 122.dp)
                     )
 
-                    Spacer(modifier = Modifier.height(10.dp))
+                    Spacer(modifier = Modifier.height(if (uiScale.isCompact) 8.dp else 10.dp))
 
                     // Main Elevated Login Card
                     Surface(
-                        shape = RoundedCornerShape(26.dp),
+                        shape = RoundedCornerShape(if (uiScale.isCompact) 22.dp else 26.dp),
                         color = cardBg,
                         border = BorderStroke(1.dp, cardBorder),
                         shadowElevation = if (isDarkMode) 4.dp else 10.dp,
@@ -298,7 +305,10 @@ fun LoginScreen(
                         Column(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(horizontal = 20.dp, vertical = 20.dp)
+                                .padding(
+                                    horizontal = if (uiScale.isCompact) 14.dp else 20.dp,
+                                    vertical = if (uiScale.isCompact) 16.dp else 20.dp
+                                )
                         ) {
                             // Card Header: Shield badge + "تسجيل الدخول الآمن"
                             Row(
@@ -573,7 +583,7 @@ fun LoginScreen(
                                 Box(
                                     modifier = Modifier
                                         .weight(1f)
-                                        .height(54.dp)
+                                        .heightIn(min = 50.dp)
                                         .graphicsLayer {
                                             scaleX = loginButtonScale
                                             scaleY = loginButtonScale
@@ -597,6 +607,7 @@ fun LoginScreen(
                                         ) {
                                             onLogin(username, password, rememberMe) { errorText = it }
                                         }
+                                        .padding(horizontal = 10.dp, vertical = 10.dp)
                                         .testTag("login_submit_button"),
                                     contentAlignment = Alignment.Center
                                 ) {
@@ -726,13 +737,13 @@ fun LoginScreen(
                                 border = BorderStroke(1.2.dp, trialBtnBorder),
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .height(52.dp)
+                                    .heightIn(min = 48.dp)
                                     .testTag("login_trial_button")
                             ) {
                                 Row(
                                     modifier = Modifier
-                                        .fillMaxSize()
-                                        .padding(horizontal = 16.dp),
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 14.dp, vertical = 12.dp),
                                     verticalAlignment = Alignment.CenterVertically,
                                     horizontalArrangement = Arrangement.Center
                                 ) {
@@ -740,7 +751,7 @@ fun LoginScreen(
                                         imageVector = Icons.Default.PlayCircleOutline,
                                         contentDescription = "فتح حساب تجريبي لمدة 3 أيام",
                                         tint = if (isDarkMode) Color(0xFF93C5FD) else HesabatyBlueDark,
-                                        modifier = Modifier.size(22.dp)
+                                        modifier = Modifier.size(21.dp)
                                     )
                                     Spacer(modifier = Modifier.width(8.dp))
                                     Text(
@@ -766,13 +777,13 @@ fun LoginScreen(
                                 ),
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .height(48.dp)
+                                    .heightIn(min = 46.dp)
                                     .testTag("login_activate_on_device_button")
                             ) {
                                 Row(
                                     modifier = Modifier
-                                        .fillMaxSize()
-                                        .padding(horizontal = 14.dp),
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 12.dp, vertical = 11.dp),
                                     verticalAlignment = Alignment.CenterVertically,
                                     horizontalArrangement = Arrangement.Center
                                 ) {
@@ -780,13 +791,14 @@ fun LoginScreen(
                                         imageVector = Icons.Default.VerifiedUser,
                                         contentDescription = "إنشاء أو تفعيل حساب على هذا الجهاز",
                                         tint = if (isDarkMode) Color(0xFF93C5FD) else HesabatyBlue,
-                                        modifier = Modifier.size(19.dp)
+                                        modifier = Modifier.size(18.dp)
                                     )
                                     Spacer(modifier = Modifier.width(8.dp))
                                     Text(
                                         text = "إنشاء / تفعيل حساب على هذا الهاتف",
                                         style = MaterialTheme.typography.labelLarge,
                                         fontWeight = FontWeight.Bold,
+                                        textAlign = TextAlign.Center,
                                         color = if (isDarkMode) Color(0xFFBFDBFE) else HesabatyBlueDark
                                     )
                                 }
@@ -1086,10 +1098,10 @@ fun TrialExpiredScreen(
                         shape = RoundedCornerShape(14.dp),
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(48.dp)
+                            .heightIn(min = 48.dp)
                             .testTag("trial_expired_return_login_button")
                     ) {
-                        Text("تسجيل الدخول بحساب مُفعَّل / الإدارة")
+                        Text("تسجيل الدخول بحساب مُفعَّل / الإدارة", textAlign = TextAlign.Center)
                     }
                 }
             }
@@ -1218,7 +1230,7 @@ fun BiometricLockScreen(
             modifier = Modifier
                 .fillMaxWidth()
                 .widthIn(max = 320.dp)
-                .height(50.dp)
+                .heightIn(min = 48.dp)
         ) {
             Text("فتح بالبصمة / قفل الجهاز")
         }

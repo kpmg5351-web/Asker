@@ -85,6 +85,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
@@ -121,6 +122,7 @@ fun ProductsScreen(
     val currency = settings?.defaultCurrencyLabel ?: "ج.م"
     val waCountry = settings?.whatsappCountryCode ?: "20"
     val extras = HesabatyThemeExtras.colors
+    val uiScale = HesabatyThemeExtras.uiScale
 
     var searchQuery by rememberSaveable { mutableStateOf("") }
     var selectedCategory by rememberSaveable { mutableStateOf("الكل") }
@@ -249,8 +251,8 @@ fun ProductsScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding),
-            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 92.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
+            contentPadding = PaddingValues(start = uiScale.screenPadding, end = uiScale.screenPadding, top = 10.dp, bottom = 92.dp),
+            verticalArrangement = Arrangement.spacedBy(uiScale.sectionSpacing)
         ) {
             // Summary KPI Strip
             item {
@@ -585,6 +587,7 @@ fun ProductFormDialog(
     var err by remember { mutableStateOf<String?>(null) }
 
     val extras = HesabatyThemeExtras.colors
+    val uiScale = HesabatyThemeExtras.uiScale
     val parsedSalePreview = remember(salePriceText) { MoneyFormatter.parseEgpToPiasters(salePriceText) ?: 0L }
     val parsedBuyPreview = remember(purchasePriceText) { MoneyFormatter.parseEgpToPiasters(purchasePriceText) ?: 0L }
     val previewExamples = remember(unitLabel, parsedSalePreview, currency) {
@@ -604,10 +607,10 @@ fun ProductFormDialog(
     ) {
         Surface(
             modifier = Modifier
-                .fillMaxWidth(0.94f)
+                .fillMaxWidth(if (uiScale.isCompact) 0.96f else 0.94f)
                 .widthIn(max = 520.dp)
-                .heightIn(max = 720.dp),
-            shape = RoundedCornerShape(28.dp),
+                .heightIn(max = 680.dp),
+            shape = RoundedCornerShape(if (uiScale.isCompact) 22.dp else 28.dp),
             color = MaterialTheme.colorScheme.surface,
             border = BorderStroke(1.dp, extras.cardBorder),
             tonalElevation = 6.dp,
@@ -681,8 +684,8 @@ fun ProductFormDialog(
                     modifier = Modifier
                         .weight(1f, fill = false)
                         .verticalScroll(rememberScrollState())
-                        .padding(horizontal = 16.dp, vertical = 14.dp),
-                    verticalArrangement = Arrangement.spacedBy(14.dp)
+                        .padding(horizontal = uiScale.cardPadding, vertical = if (uiScale.isCompact) 10.dp else 14.dp),
+                    verticalArrangement = Arrangement.spacedBy(if (uiScale.isCompact) 10.dp else 14.dp)
                 ) {
                     // Section 1: Product Name & Category
                     Surface(
@@ -691,7 +694,7 @@ fun ProductFormDialog(
                         border = BorderStroke(1.dp, extras.cardBorder.copy(alpha = 0.7f))
                     ) {
                         Column(
-                            modifier = Modifier.padding(14.dp),
+                            modifier = Modifier.padding(if (uiScale.isCompact) 11.dp else 14.dp),
                             verticalArrangement = Arrangement.spacedBy(10.dp)
                         ) {
                             Row(
@@ -829,7 +832,7 @@ fun ProductFormDialog(
                                     Row(
                                         modifier = Modifier
                                             .weight(1f)
-                                            .height(40.dp)
+                                            .heightIn(min = 38.dp)
                                             .clip(RoundedCornerShape(10.dp))
                                             .background(bg)
                                             .clickable {
@@ -840,23 +843,27 @@ fun ProductFormDialog(
                                                     unitLabel = presets.first()
                                                 }
                                             }
+                                            .padding(horizontal = if (uiScale.isCompact) 3.dp else 6.dp, vertical = 6.dp)
                                             .testTag("unit_mode_${cat.name.lowercase()}"),
                                         horizontalArrangement = Arrangement.Center,
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
-                                        Icon(
-                                            imageVector = icon,
-                                            contentDescription = null,
-                                            tint = fg,
-                                            modifier = Modifier.size(16.dp)
-                                        )
-                                        Spacer(modifier = Modifier.width(4.dp))
+                                        if (!uiScale.isNarrow) {
+                                            Icon(
+                                                imageVector = icon,
+                                                contentDescription = null,
+                                                tint = fg,
+                                                modifier = Modifier.size(if (uiScale.isCompact) 14.dp else 16.dp)
+                                            )
+                                            Spacer(modifier = Modifier.width(3.dp))
+                                        }
                                         Text(
                                             text = title,
-                                            style = MaterialTheme.typography.labelMedium,
+                                            style = if (uiScale.isCompact) MaterialTheme.typography.labelSmall else MaterialTheme.typography.labelMedium,
                                             fontWeight = if (active) FontWeight.Bold else FontWeight.Medium,
                                             color = fg,
-                                            maxLines = 1,
+                                            textAlign = TextAlign.Center,
+                                            maxLines = 2,
                                             overflow = TextOverflow.Ellipsis
                                         )
                                     }
@@ -1175,14 +1182,16 @@ fun ProductFormDialog(
                         colors = ButtonDefaults.buttonColors(containerColor = PrimaryBlue),
                         modifier = Modifier
                             .weight(1.4f)
-                            .height(50.dp)
+                            .heightIn(min = 46.dp)
                             .testTag("product_form_save_btn")
                     ) {
                         Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(modifier = Modifier.width(6.dp))
                         Text(
                             text = if (initial == null) "حفظ الصنف" else "حفظ التعديلات",
-                            fontWeight = FontWeight.Bold
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                     }
                     OutlinedButton(
@@ -1191,9 +1200,9 @@ fun ProductFormDialog(
                         border = BorderStroke(1.dp, extras.cardBorder),
                         modifier = Modifier
                             .weight(0.8f)
-                            .height(50.dp)
+                            .heightIn(min = 46.dp)
                     ) {
-                        Text("إلغاء", fontWeight = FontWeight.SemiBold)
+                        Text("إلغاء", fontWeight = FontWeight.SemiBold, maxLines = 1)
                     }
                 }
             }
@@ -1335,6 +1344,7 @@ fun ProductPickerDialog(
 ) {
     var query by remember { mutableStateOf("") }
     val extras = HesabatyThemeExtras.colors
+    val uiScale = HesabatyThemeExtras.uiScale
     val filtered = remember(products, query) {
         val q = query.trim()
         if (q.isEmpty()) products
@@ -1351,10 +1361,10 @@ fun ProductPickerDialog(
     ) {
         Surface(
             modifier = Modifier
-                .fillMaxWidth(0.94f)
+                .fillMaxWidth(if (uiScale.isCompact) 0.96f else 0.94f)
                 .widthIn(max = 520.dp)
-                .heightIn(max = 640.dp),
-            shape = RoundedCornerShape(26.dp),
+                .heightIn(max = 580.dp),
+            shape = RoundedCornerShape(if (uiScale.isCompact) 22.dp else 26.dp),
             color = MaterialTheme.colorScheme.surface,
             border = BorderStroke(1.dp, extras.cardBorder),
             shadowElevation = 14.dp
@@ -1454,7 +1464,7 @@ fun ProductPickerDialog(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .weight(1f, fill = false)
-                                .heightIn(max = 320.dp),
+                                .heightIn(max = 280.dp),
                             verticalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
                             items(filtered, key = { it.id }) { prod ->
@@ -1470,9 +1480,9 @@ fun ProductPickerDialog(
                                     ) {
                                         Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                                             Text(prod.name, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
-                                            Row(
+                                            FlowRow(
                                                 horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                                verticalAlignment = Alignment.CenterVertically
+                                                verticalArrangement = Arrangement.spacedBy(4.dp)
                                             ) {
                                                 StatusBadge(
                                                     label = "${unitCat.title} • ${prod.unitLabel}",
@@ -1514,7 +1524,7 @@ fun ProductPickerDialog(
                         colors = ButtonDefaults.buttonColors(containerColor = PrimaryBlue),
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(48.dp)
+                            .heightIn(min = 46.dp)
                     ) {
                         Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(modifier = Modifier.width(6.dp))

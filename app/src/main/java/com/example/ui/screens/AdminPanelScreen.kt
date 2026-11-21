@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -190,7 +191,7 @@ fun AdminPanelScreen(
                                 onClick = { showCreateShopDialog = true },
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .height(52.dp)
+                                    .heightIn(min = 48.dp)
                                     .testTag("admin_create_shop_button")
                             ) {
                                 Icon(Icons.Default.AddBusiness, contentDescription = null)
@@ -202,7 +203,7 @@ fun AdminPanelScreen(
                                 onClick = { showRemoteTokenDialog = true },
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .height(48.dp)
+                                    .heightIn(min = 48.dp)
                                     .testTag("admin_generate_remote_token_button")
                             ) {
                                 Icon(Icons.Default.PhoneAndroid, contentDescription = null, modifier = Modifier.size(18.dp))
@@ -214,7 +215,7 @@ fun AdminPanelScreen(
                                 onClick = { viewModel.logout() },
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .height(46.dp)
+                                    .heightIn(min = 46.dp)
                                     .testTag("admin_inline_logout_button")
                             ) {
                                 Icon(

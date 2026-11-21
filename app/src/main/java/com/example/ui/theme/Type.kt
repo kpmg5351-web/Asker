@@ -101,3 +101,27 @@ val HesabatyTypography = Typography(
         lineHeight = 14.sp
     )
 )
+
+fun scaledHesabatyTypography(scale: Float): Typography {
+    if (scale >= 0.99f) return HesabatyTypography
+    fun TextStyle.scaled() = copy(
+        fontSize = (fontSize.value * scale).sp,
+        lineHeight = (lineHeight.value * scale).sp
+    )
+    return Typography(
+        displayLarge = HesabatyTypography.displayLarge.scaled(),
+        displaySmall = HesabatyTypography.displaySmall.scaled(),
+        headlineLarge = HesabatyTypography.headlineLarge.scaled(),
+        headlineMedium = HesabatyTypography.headlineMedium.scaled(),
+        headlineSmall = HesabatyTypography.headlineSmall.scaled(),
+        titleLarge = HesabatyTypography.titleLarge.scaled(),
+        titleMedium = HesabatyTypography.titleMedium.scaled(),
+        titleSmall = HesabatyTypography.titleSmall.scaled(),
+        bodyLarge = HesabatyTypography.bodyLarge.scaled(),
+        bodyMedium = HesabatyTypography.bodyMedium.scaled(),
+        bodySmall = HesabatyTypography.bodySmall.scaled(),
+        labelLarge = HesabatyTypography.labelLarge.scaled(),
+        labelMedium = HesabatyTypography.labelMedium.scaled(),
+        labelSmall = HesabatyTypography.labelSmall.scaled()
+    )
+}

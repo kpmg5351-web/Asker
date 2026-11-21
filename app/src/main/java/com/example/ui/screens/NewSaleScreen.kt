@@ -6,12 +6,15 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -117,7 +120,7 @@ private data class InstallmentInputRow(
     val amountText: String
 )
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun NewSaleScreen(
     preselectedCustomerId: String? = null,
@@ -166,6 +169,7 @@ fun NewSaleScreen(
     val remainingPiasters = (grandTotalPiasters - effectivePaidPiasters).coerceAtLeast(0L)
     val selectedCustomer = customers.firstOrNull { it.id == selectedCustomerId }
     val extras = HesabatyThemeExtras.colors
+    val uiScale = HesabatyThemeExtras.uiScale
 
     Scaffold(
         topBar = {
@@ -180,8 +184,8 @@ fun NewSaleScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding),
-            contentPadding = PaddingValues(16.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp)
+            contentPadding = PaddingValues(uiScale.screenPadding),
+            verticalArrangement = Arrangement.spacedBy(uiScale.sectionSpacing)
         ) {
             // 1. Select Customer
             item {
@@ -248,15 +252,17 @@ fun NewSaleScreen(
             // 2. Flexible Sale Items (no product catalog mandatory)
             item {
                 HesabatyCard(modifier = Modifier.fillMaxWidth()) {
-                    Row(
+                    FlowRow(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
+                        verticalArrangement = Arrangement.spacedBy(2.dp),
+                        itemVerticalAlignment = Alignment.CenterVertically
                     ) {
                         Text("2. تفاصيل البيع والمبالغ", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             TextButton(
                                 onClick = { showProductPicker = true },
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
                                 modifier = Modifier.testTag("sale_pick_product_btn")
                             ) {
                                 Icon(Icons.Default.Inventory2, contentDescription = null, modifier = Modifier.size(16.dp))
@@ -265,6 +271,7 @@ fun NewSaleScreen(
                             }
                             TextButton(
                                 onClick = { lineRows.add(LineInputRow()) },
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
                                 modifier = Modifier.testTag("sale_add_line_btn")
                             ) {
                                 Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
@@ -596,9 +603,10 @@ fun NewSaleScreen(
                 HesabatyCard(modifier = Modifier.fillMaxWidth()) {
                     Text("3. نوع البيع والسداد", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
                     Spacer(modifier = Modifier.height(8.dp))
-                    Row(
+                    FlowRow(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
                         listOf(
                             SaleTypes.CASH to "بيع كاش",
@@ -620,7 +628,10 @@ fun NewSaleScreen(
 
                     Spacer(modifier = Modifier.height(10.dp))
                     Text("طريقة التحصيل (للمبلغ المستلم الآن):", style = MaterialTheme.typography.labelMedium)
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
                         FilterChip(
                             selected = paymentMethod == PaymentMethods.CASH,
                             onClick = { paymentMethod = PaymentMethods.CASH },
@@ -642,21 +653,25 @@ fun NewSaleScreen(
                         label = {
                             Text(
                                 if (saleType == SaleTypes.CASH) {
-                                    "المبلغ المستلم (اتركه فارغًا لكامل الإجمالي)"
+                                    "المبلغ المستلم الآن"
                                 } else {
                                     "المبلغ المدفوع مقدمًا (اختياري)"
                                 }
                             )
                         },
+                        placeholder = if (saleType == SaleTypes.CASH) {
+                            { Text("اتركه فارغًا لكامل الإجمالي") }
+                        } else null,
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                         modifier = Modifier.fillMaxWidth().testTag("sale_paid_now_input")
                     )
 
                     Spacer(modifier = Modifier.height(8.dp))
-                    Row(
+                    FlowRow(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
                         Text("المدفوع: ${MoneyFormatter.formatEgp(effectivePaidPiasters, currency)}", color = extras.success, fontWeight = FontWeight.SemiBold)
                         Text("المتبقي: ${MoneyFormatter.formatEgp(remainingPiasters, currency)}", color = if (remainingPiasters > 0) extras.danger else extras.success, fontWeight = FontWeight.Bold)
@@ -678,10 +693,10 @@ fun NewSaleScreen(
                         Spacer(modifier = Modifier.height(12.dp))
                         HorizontalDivider()
                         Spacer(modifier = Modifier.height(8.dp))
-                        Row(
+                        FlowRow(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
+                            itemVerticalAlignment = Alignment.CenterVertically
                         ) {
                             Text("جدول الدفعات المجدولة (بدون فوائد)", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
                             TextButton(
@@ -839,7 +854,7 @@ fun NewSaleScreen(
                         enabled = !isBusy,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(52.dp)
+                            .heightIn(min = 48.dp)
                             .testTag("save_sale_button")
                     ) {
                         Icon(Icons.Default.CheckCircle, contentDescription = null)

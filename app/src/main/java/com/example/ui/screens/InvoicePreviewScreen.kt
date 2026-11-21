@@ -4,12 +4,15 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -141,14 +144,15 @@ fun InvoicePreviewScreen(
             return@Scaffold
         }
 
+        val uiScale = HesabatyThemeExtras.uiScale
         val (totPounds, totPiasters) = MoneyFormatter.splitPoundsAndPiasters(inv.totalPiasters)
 
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding),
-            contentPadding = PaddingValues(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+            contentPadding = PaddingValues(uiScale.screenPadding),
+            verticalArrangement = Arrangement.spacedBy(uiScale.sectionSpacing)
         ) {
             // Electronic Paper-Style Invoice Card
             item {
@@ -353,12 +357,12 @@ fun InvoicePreviewScreen(
                     colors = ButtonDefaults.buttonColors(containerColor = extras.success),
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(52.dp)
+                        .heightIn(min = 48.dp)
                         .testTag("invoice_whatsapp_btn")
                 ) {
                     Icon(Icons.AutoMirrored.Filled.Send, contentDescription = null)
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text("إرسال الفاتورة عبر واتساب (صورة + رسالة)", fontWeight = FontWeight.Bold)
+                    Text("إرسال الفاتورة عبر واتساب (صورة + رسالة)", fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
                 }
 
                 Spacer(modifier = Modifier.height(10.dp))
@@ -380,11 +384,12 @@ fun InvoicePreviewScreen(
                             )
                             if (!res.launched && res.errorMessage != null) viewModel.emitMessage(res.errorMessage, true)
                         },
-                        modifier = Modifier.weight(1f).height(48.dp).testTag("invoice_pdf_btn")
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 10.dp),
+                        modifier = Modifier.weight(1f).heightIn(min = 48.dp).testTag("invoice_pdf_btn")
                     ) {
                         Icon(Icons.Default.PictureAsPdf, contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(modifier = Modifier.width(6.dp))
-                        Text("مشاركة PDF")
+                        Text("مشاركة PDF", textAlign = TextAlign.Center)
                     }
                     OutlinedButton(
                         onClick = {
@@ -400,11 +405,12 @@ fun InvoicePreviewScreen(
                             )
                             if (!res.launched && res.errorMessage != null) viewModel.emitMessage(res.errorMessage, true)
                         },
-                        modifier = Modifier.weight(1f).height(48.dp).testTag("invoice_image_btn")
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 10.dp),
+                        modifier = Modifier.weight(1f).heightIn(min = 48.dp).testTag("invoice_image_btn")
                     ) {
                         Icon(Icons.Default.Image, contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(modifier = Modifier.width(6.dp))
-                        Text("مشاركة صورة")
+                        Text("مشاركة صورة", textAlign = TextAlign.Center)
                     }
                 }
             }

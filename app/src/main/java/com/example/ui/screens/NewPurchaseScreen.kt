@@ -6,12 +6,15 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -109,7 +112,7 @@ private data class PurchaseLineInputRow(
         }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun NewPurchaseScreen(
     preselectedSupplierId: String? = null,
@@ -150,6 +153,7 @@ fun NewPurchaseScreen(
     val remainingPiasters = (grandTotalPiasters - effectivePaidPiasters).coerceAtLeast(0L)
     val selectedSupplier = suppliers.firstOrNull { it.id == selectedSupplierId }
     val extras = HesabatyThemeExtras.colors
+    val uiScale = HesabatyThemeExtras.uiScale
 
     Scaffold(
         topBar = {
@@ -164,8 +168,8 @@ fun NewPurchaseScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding),
-            contentPadding = PaddingValues(16.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp)
+            contentPadding = PaddingValues(uiScale.screenPadding),
+            verticalArrangement = Arrangement.spacedBy(uiScale.sectionSpacing)
         ) {
             // 1. Select Supplier
             item {
@@ -232,15 +236,17 @@ fun NewPurchaseScreen(
             // 2. Purchase Items
             item {
                 HesabatyCard(modifier = Modifier.fillMaxWidth()) {
-                    Row(
+                    FlowRow(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
+                        verticalArrangement = Arrangement.spacedBy(2.dp),
+                        itemVerticalAlignment = Alignment.CenterVertically
                     ) {
                         Text("2. تفاصيل المشتريات والأصناف", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             TextButton(
                                 onClick = { showProductPicker = true },
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
                                 modifier = Modifier.testTag("purchase_pick_product_btn")
                             ) {
                                 Icon(Icons.Default.Inventory2, contentDescription = null, modifier = Modifier.size(16.dp))
@@ -249,6 +255,7 @@ fun NewPurchaseScreen(
                             }
                             TextButton(
                                 onClick = { lineRows.add(PurchaseLineInputRow()) },
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
                                 modifier = Modifier.testTag("purchase_add_line_btn")
                             ) {
                                 Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
@@ -514,9 +521,10 @@ fun NewPurchaseScreen(
                 HesabatyCard(modifier = Modifier.fillMaxWidth()) {
                     Text("3. نوع الشراء والسداد للمورد", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
                     Spacer(modifier = Modifier.height(8.dp))
-                    Row(
+                    FlowRow(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
                         listOf(
                             PurchaseTypes.CASH to "شراء كاش",
@@ -537,7 +545,10 @@ fun NewPurchaseScreen(
 
                     Spacer(modifier = Modifier.height(10.dp))
                     Text("طريقة الدفع للمورد:", style = MaterialTheme.typography.labelMedium)
-                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
                         listOf(
                             PaymentMethods.CASH to "نقدي",
                             PaymentMethods.EWALLET to "محفظة إلكترونية",
@@ -558,21 +569,25 @@ fun NewPurchaseScreen(
                         label = {
                             Text(
                                 if (purchaseType == PurchaseTypes.CASH) {
-                                    "المبلغ المدفوع للمورد الآن (اتركه فارغًا لكامل الإجمالي)"
+                                    "المبلغ المدفوع للمورد الآن"
                                 } else {
                                     "الدفعة المقدمة للمورد (اختياري)"
                                 }
                             )
                         },
+                        placeholder = if (purchaseType == PurchaseTypes.CASH) {
+                            { Text("اتركه فارغًا لكامل الإجمالي") }
+                        } else null,
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                         modifier = Modifier.fillMaxWidth().testTag("purchase_paid_now_input")
                     )
 
                     Spacer(modifier = Modifier.height(8.dp))
-                    Row(
+                    FlowRow(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
                         Text("المدفوع: ${MoneyFormatter.formatEgp(effectivePaidPiasters, currency)}", color = extras.success, fontWeight = FontWeight.SemiBold)
                         Text("المتبقي للمورد: ${MoneyFormatter.formatEgp(remainingPiasters, currency)}", color = if (remainingPiasters > 0) extras.danger else extras.success, fontWeight = FontWeight.Bold)
@@ -673,7 +688,7 @@ fun NewPurchaseScreen(
                         enabled = !isBusy,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(52.dp)
+                            .heightIn(min = 48.dp)
                             .testTag("save_purchase_button")
                     ) {
                         Icon(Icons.Default.CheckCircle, contentDescription = null)

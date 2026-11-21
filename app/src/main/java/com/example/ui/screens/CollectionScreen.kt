@@ -2,12 +2,15 @@ package com.example.ui.screens
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -111,6 +114,7 @@ fun CollectionScreen(
     val selectedCustomer = customers.firstOrNull { it.id == selectedCustomerId }
     val selectedInvoice = openInvoices.firstOrNull { it.id == selectedInvoiceId }
 
+    val uiScale = HesabatyThemeExtras.uiScale
     Scaffold(
         topBar = {
             HesabatyTopBar(
@@ -124,8 +128,8 @@ fun CollectionScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding),
-            contentPadding = PaddingValues(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+            contentPadding = PaddingValues(uiScale.screenPadding),
+            verticalArrangement = Arrangement.spacedBy(uiScale.sectionSpacing)
         ) {
             item {
                 HesabatyCard(modifier = Modifier.fillMaxWidth()) {
@@ -253,7 +257,11 @@ fun CollectionScreen(
 
                     Spacer(modifier = Modifier.height(10.dp))
                     Text("طريقة التحصيل:", style = MaterialTheme.typography.labelMedium)
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    @OptIn(ExperimentalLayoutApi::class)
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
                         FilterChip(
                             selected = paymentMethod == PaymentMethods.CASH,
                             onClick = { paymentMethod = PaymentMethods.CASH },
@@ -354,7 +362,7 @@ fun CollectionScreen(
                         colors = ButtonDefaults.buttonColors(containerColor = extras.success),
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(52.dp)
+                            .heightIn(min = 48.dp)
                             .testTag("collection_submit_button")
                     ) {
                         Icon(Icons.Default.CheckCircle, contentDescription = null)

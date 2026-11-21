@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
@@ -60,6 +61,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
@@ -679,8 +681,9 @@ private fun HesabatyFloatingBottomBar(
     onSelectTab: (String) -> Unit
 ) {
     val activeGold = Color(0xFFFBBF24)
+    val uiScale = HesabatyThemeExtras.uiScale
     Surface(
-        shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
+        shape = RoundedCornerShape(topStart = if (uiScale.isCompact) 22.dp else 28.dp, topEnd = if (uiScale.isCompact) 22.dp else 28.dp),
         color = MaterialTheme.colorScheme.surface,
         shadowElevation = 14.dp,
         border = BorderStroke(1.dp, HesabatyThemeExtras.colors.cardBorder.copy(alpha = 0.7f)),
@@ -690,17 +693,20 @@ private fun HesabatyFloatingBottomBar(
             modifier = Modifier
                 .fillMaxWidth()
                 .navigationBarsPadding()
-                .padding(horizontal = 10.dp, vertical = 10.dp),
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                .padding(
+                    horizontal = if (uiScale.isCompact) 4.dp else 10.dp,
+                    vertical = if (uiScale.isCompact) 6.dp else 10.dp
+                ),
+            horizontalArrangement = Arrangement.spacedBy(if (uiScale.isCompact) 2.dp else 4.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             tabs.forEach { tab ->
                 val selected = currentRoute == tab.route
                 Box(
                     modifier = Modifier
-                        .weight(if (selected) 1.2f else 1f)
-                        .height(58.dp)
-                        .clip(RoundedCornerShape(18.dp))
+                        .weight(if (selected) (if (uiScale.isCompact) 1.12f else 1.2f) else 1f)
+                        .heightIn(min = if (uiScale.isCompact) 50.dp else 56.dp)
+                        .clip(RoundedCornerShape(if (uiScale.isCompact) 14.dp else 18.dp))
                         .then(
                             if (selected) {
                                 Modifier.background(
@@ -713,27 +719,29 @@ private fun HesabatyFloatingBottomBar(
                             }
                         )
                         .clickable { onSelectTab(tab.route) }
+                        .padding(vertical = if (uiScale.isCompact) 5.dp else 6.dp, horizontal = 2.dp)
                         .testTag("bottom_tab_${tab.route}"),
                     contentAlignment = Alignment.Center
                 ) {
                     Column(
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.Center,
-                        modifier = Modifier.padding(horizontal = 4.dp)
+                        modifier = Modifier.padding(horizontal = 2.dp)
                     ) {
                         Icon(
                             imageVector = tab.icon,
                             contentDescription = tab.label,
                             tint = if (selected) activeGold else MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.size(22.dp)
+                            modifier = Modifier.size(if (uiScale.isCompact) 19.dp else 22.dp)
                         )
-                        Spacer(modifier = Modifier.height(3.dp))
+                        Spacer(modifier = Modifier.height(2.dp))
                         Text(
                             text = tab.label,
                             style = MaterialTheme.typography.labelSmall,
                             fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
                             color = if (selected) Color.White else MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 1,
+                            textAlign = TextAlign.Center,
+                            maxLines = 2,
                             overflow = TextOverflow.Ellipsis
                         )
                     }
