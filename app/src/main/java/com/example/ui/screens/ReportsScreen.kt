@@ -20,6 +20,8 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.AccountBalanceWallet
+import androidx.compose.material.icons.filled.ArrowDownward
+import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Assessment
 import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.Groups
@@ -135,7 +137,50 @@ fun ReportsScreen(
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 if (selectedTab == 0) {
-                    // Complete Live Financial Summary (Moved off Main Screen into Standalone Reports)
+                    item {
+                        KpiMetricCard(
+                            title = "الرصيد الإجمالي (صافي الوارد − الصادر)",
+                            value = MoneyFormatter.formatEgp(summary.totalNetBalancePiasters, currency),
+                            icon = Icons.Default.AccountBalanceWallet,
+                            accentColor = if (summary.totalNetBalancePiasters >= 0L) extras.success else extras.danger,
+                            accentContainer = if (summary.totalNetBalancePiasters >= 0L) extras.successContainer else extras.dangerContainer,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+
+                    item {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            KpiMetricCard(
+                                title = "إجمالي الوارد",
+                                value = MoneyFormatter.formatEgp(summary.totalIncomingPiasters, currency),
+                                icon = Icons.Default.ArrowDownward,
+                                accentColor = extras.success,
+                                accentContainer = extras.successContainer,
+                                onClick = {
+                                    selectedType = ReportType.CUSTOMER_COLLECTIONS
+                                    selectedTab = 1
+                                },
+                                modifier = Modifier.weight(1f)
+                            )
+                            KpiMetricCard(
+                                title = "إجمالي الصادر",
+                                value = MoneyFormatter.formatEgp(summary.totalOutgoingPiasters, currency),
+                                icon = Icons.Default.ArrowUpward,
+                                accentColor = extras.danger,
+                                accentContainer = extras.dangerContainer,
+                                onClick = {
+                                    selectedType = ReportType.SUPPLIER_PAYMENTS
+                                    selectedTab = 1
+                                },
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                    }
+
+                    // Complete Live Financial Summary
                     item {
                         Row(
                             modifier = Modifier.fillMaxWidth(),

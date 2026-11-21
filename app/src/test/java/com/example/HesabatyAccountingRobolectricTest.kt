@@ -946,4 +946,86 @@ class HesabatyAccountingRobolectricTest {
         val shareIntent = backupManager.createShareBackupIntent(file)
         assertNotNull(shareIntent)
     }
+
+    @Test
+    fun test26_dashboardSummaryCalculatesTotalIncomingOutgoingAndNetBalance() = runTest {
+        val cid = (accRepo.addCustomer(tenantAId, ownerA, "عميل الرصيد", "01012345670", "", "", "", 0L) as RepoResult.Success).data.id
+        val sid = (accRepo.addSupplier(tenantAId, ownerA, "مورد الرصيد", "01098765432", "", "", "", 0L) as RepoResult.Success).data.id
+
+        val now = EgyptTime.nowMillis()
+        val twoDaysAgo = now - 2L * 24 * 60 * 60 * 1000L
+
+        // Yesterday/older cash sale: 1,000 EGP (100_000 piasters)
+        accRepo.createSalesInvoice(
+            tenantId = tenantAId,
+            actor = ownerA,
+            customerId = cid,
+            lines = listOf(SaleLineDraft("بضاعة سابقة", 100_000L, 1_000L)),
+            saleType = SaleTypes.CASH,
+            paymentMethod = PaymentMethods.CASH,
+            paidNowPiasters = 100_000L,
+            dueDateMillis = null,
+            installments = emptyList(),
+            notes = "",
+            occurredAtMillis = twoDaysAgo
+        )
+
+        // Today's credit sale: 800 EGP total, 300 EGP paid by bank transfer (500 EGP customer receivable)
+        accRepo.createSalesInvoice(
+            tenantId = tenantAId,
+            actor = ownerA,
+            customerId = cid,
+            lines = listOf(SaleLineDraft("بضاعة اليوم", 80_000L, 1_000L)),
+            saleType = SaleTypes.CREDIT,
+            paymentMethod = PaymentMethods.BANK_TRANSFER,
+            paidNowPiasters = 30_000L,
+            dueDateMillis = null,
+            installments = emptyList(),
+            notes = "",
+            occurredAtMillis = now
+        )
+
+        // Older purchase invoice: 600 EGP total, 400 EGP paid (200 EGP supplier payable)
+        accRepo.createPurchaseInvoice(
+            tenantId = tenantAId,
+            actor = ownerA,
+            supplierId = sid,
+            lines = listOf(PurchaseLineDraft("شراء قديم", 60_000L, 1_000L)),
+            purchaseType = PurchaseTypes.CREDIT,
+            paymentMethod = PaymentMethods.CASH,
+            paidNowPiasters = 40_000L,
+            dueDateMillis = null,
+            notes = "",
+            occurredAtMillis = twoDaysAgo
+        )
+
+        // Today's supplier payment: 150 EGP (15_000 piasters) -> supplier payable drops to 50 EGP (5_000 piasters)
+        accRepo.recordSupplierTransaction(
+            tenantId = tenantAId,
+            actor = ownerA,
+            supplierId = sid,
+            type = SupplierTxTypes.PAYMENT_PARTIAL,
+            amountPiasters = 15_000L,
+            paymentMethod = PaymentMethods.CASH,
+            notes = "دفعة اليوم",
+            occurredAtMillis = now
+        )
+
+        val summary = accRepo.observeDashboardSummary(tenantAId).first()
+        // Total incoming = 100_000 + 30_000 = 130_000
+        assertEquals(130_000L, summary.totalIncomingPiasters)
+        // Total outgoing = 40_000 + 15_000 = 55_000
+        assertEquals(55_000L, summary.totalOutgoingPiasters)
+        // Total net balance = 130_000 - 55_000 = 75_000
+        assertEquals(75_000L, summary.totalNetBalancePiasters)
+
+        // Today incoming = 30_000, today outgoing = 15_000, today net = 15_000
+        assertEquals(30_000L, summary.todayIncomingPiasters)
+        assertEquals(15_000L, summary.todaySupplierPaymentsPiasters)
+        assertEquals(15_000L, summary.todayNetCashflowPiasters)
+
+        // Receivables & payables
+        assertEquals(50_000L, summary.totalCustomerReceivablesPiasters)
+        assertEquals(5_000L, summary.totalSupplierPayablesPiasters)
+    }
 }

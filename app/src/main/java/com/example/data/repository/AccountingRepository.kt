@@ -66,6 +66,10 @@ data class InstallmentDraft(
 )
 
 data class DashboardSummary(
+    val totalIncomingPiasters: Long = 0L,
+    val totalOutgoingPiasters: Long = 0L,
+    val totalNetBalancePiasters: Long = 0L,
+    val todayIncomingPiasters: Long = 0L,
     val totalCustomerReceivablesPiasters: Long = 0L,
     val totalSupplierPayablesPiasters: Long = 0L,
     val todaySalesPiasters: Long = 0L,
@@ -196,6 +200,13 @@ class AccountingRepository(private val db: HesabatyDatabase) {
                 .sumOf { it.amountPiasters }
             val todayAllIn = todayPayments.sumOf { it.amountPiasters }
 
+            val totalIncoming = payments.sumOf { it.amountPiasters }
+            val totalOutgoing = supplierTxs
+                .filter {
+                    it.type == SupplierTxTypes.PAYMENT_PARTIAL || it.type == SupplierTxTypes.PAYMENT_FULL
+                }
+                .sumOf { it.amountPiasters }
+
             val todaySupplierOut = supplierTxs
                 .filter {
                     it.createdAt in dayStart..dayEnd &&
@@ -206,6 +217,10 @@ class AccountingRepository(private val db: HesabatyDatabase) {
             val overdueCount = customers.count { it.accountStatus == CustomerAccountStatus.OVERDUE }
 
             DashboardSummary(
+                totalIncomingPiasters = totalIncoming,
+                totalOutgoingPiasters = totalOutgoing,
+                totalNetBalancePiasters = totalIncoming - totalOutgoing,
+                todayIncomingPiasters = todayAllIn,
                 totalCustomerReceivablesPiasters = totalCustomerReceivables,
                 totalSupplierPayablesPiasters = totalSupplierPayables,
                 todaySalesPiasters = todaySales,

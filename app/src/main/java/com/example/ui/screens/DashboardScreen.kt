@@ -32,7 +32,10 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.automirrored.filled.ReceiptLong
+import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.AddShoppingCart
+import androidx.compose.material.icons.filled.ArrowDownward
+import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Assessment
 import androidx.compose.material.icons.filled.Badge
 import androidx.compose.material.icons.filled.Backup
@@ -105,6 +108,7 @@ import com.example.data.local.UserEntity
 import com.example.data.repository.AlertSeverity
 import com.example.data.repository.AppAlert
 import com.example.data.repository.CreditLimitBreach
+import com.example.data.repository.DashboardSummary
 import com.example.data.repository.ReportType
 import com.example.data.repository.TrialStatusInfo
 import com.example.ui.components.HesabatyCard
@@ -135,6 +139,7 @@ fun DashboardScreen(
     val products by viewModel.products.collectAsStateWithLifecycle()
     val isDark by viewModel.isDarkMode.collectAsStateWithLifecycle()
     val settings by viewModel.appSettings.collectAsStateWithLifecycle()
+    val dashboardSummary by viewModel.dashboardSummary.collectAsStateWithLifecycle()
     val currency = settings?.defaultCurrencyLabel ?: "ج.م"
 
     var showAlertsDialog by remember { mutableStateOf(false) }
@@ -208,6 +213,20 @@ fun DashboardScreen(
                 onOpenAccountMenu = { showAccountMenuDialog = true },
                 onLogoutClick = { showAccountMenuDialog = true }
             )
+        }
+
+        // 1.5. Always-visible Live Total Balance + Incoming (الوارد) + Outgoing (الصادر) Card
+        item {
+            Box(modifier = Modifier.padding(horizontal = hPad)) {
+                LiveTotalBalanceCard(
+                    summary = dashboardSummary,
+                    currency = currency,
+                    isDarkMode = isDark,
+                    onOpenCustomers = { onNavigate("customers") },
+                    onOpenSuppliers = { onNavigate("suppliers") },
+                    onOpenReports = { onNavigate("reports") }
+                )
+            }
         }
 
         // 2. Floating Pill Search Bar (Live search across customers, suppliers & invoices)
@@ -1039,6 +1058,332 @@ private fun CurvedDashboardHeader(
                     modifier = Modifier.size(16.dp)
                 )
             }
+        }
+    }
+}
+
+/**
+ * Always-visible Live Total Balance Card shown right on app entry with Total Net Balance,
+ * Incoming (الوارد), Outgoing (الصادر), and quick receivables/payables summary.
+ */
+@Composable
+private fun LiveTotalBalanceCard(
+    summary: DashboardSummary,
+    currency: String,
+    isDarkMode: Boolean,
+    onOpenCustomers: () -> Unit,
+    onOpenSuppliers: () -> Unit,
+    onOpenReports: () -> Unit
+) {
+    val extras = HesabatyThemeExtras.colors
+    val uiScale = HesabatyThemeExtras.uiScale
+    var showTodayOnly by rememberSaveable { mutableStateOf(false) }
+
+    val displayedIncoming = if (showTodayOnly) summary.todayIncomingPiasters else summary.totalIncomingPiasters
+    val displayedOutgoing = if (showTodayOnly) summary.todaySupplierPaymentsPiasters else summary.totalOutgoingPiasters
+    val displayedNet = if (showTodayOnly) summary.todayNetCashflowPiasters else summary.totalNetBalancePiasters
+    val netColor = if (displayedNet >= 0L) extras.success else extras.danger
+
+    Surface(
+        shape = RoundedCornerShape(if (uiScale.isCompact) 18.dp else 22.dp),
+        color = if (isDarkMode) Color(0xFF132035) else Color.White,
+        shadowElevation = if (isDarkMode) 4.dp else 8.dp,
+        border = BorderStroke(
+            width = 1.dp,
+            color = if (isDarkMode) PrimaryBlue.copy(alpha = 0.35f) else extras.cardBorder.copy(alpha = 0.85f)
+        ),
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("dashboard_total_balance_card")
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = uiScale.cardPadding, vertical = if (uiScale.isCompact) 11.dp else 14.dp),
+            verticalArrangement = Arrangement.spacedBy(if (uiScale.isCompact) 8.dp else 10.dp)
+        ) {
+            // Top Row: Title + All-time/Today Mode Toggle + Reports shortcut
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Surface(
+                        shape = CircleShape,
+                        color = MaterialTheme.colorScheme.primaryContainer,
+                        modifier = Modifier.size(if (uiScale.isCompact) 32.dp else 36.dp)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                imageVector = Icons.Default.AccountBalanceWallet,
+                                contentDescription = "الرصيد الإجمالي",
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(if (uiScale.isCompact) 17.dp else 19.dp)
+                            )
+                        }
+                    }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Column {
+                        Text(
+                            text = if (showTodayOnly) "ملخص حركة اليوم" else "الرصيد الإجمالي",
+                            style = if (uiScale.isCompact) MaterialTheme.typography.titleSmall else MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            text = "صافي الوارد − الصادر",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+
+                // Compact All / Today segmented toggle pill
+                Surface(
+                    shape = RoundedCornerShape(50),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f),
+                    border = BorderStroke(1.dp, extras.cardBorder.copy(alpha = 0.5f))
+                ) {
+                    Row(
+                        modifier = Modifier.padding(3.dp),
+                        horizontalArrangement = Arrangement.spacedBy(2.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        BalancePeriodChip(
+                            label = "الإجمالي",
+                            selected = !showTodayOnly,
+                            onClick = { showTodayOnly = false },
+                            modifier = Modifier.testTag("balance_mode_all_chip")
+                        )
+                        BalancePeriodChip(
+                            label = "اليوم",
+                            selected = showTodayOnly,
+                            onClick = { showTodayOnly = true },
+                            modifier = Modifier.testTag("balance_mode_today_chip")
+                        )
+                    }
+                }
+            }
+
+            // Primary Net Balance Display
+            Surface(
+                onClick = onOpenReports,
+                shape = RoundedCornerShape(if (uiScale.isCompact) 12.dp else 14.dp),
+                color = if (displayedNet >= 0L) {
+                    extras.successContainer.copy(alpha = if (isDarkMode) 0.35f else 0.55f)
+                } else {
+                    extras.dangerContainer.copy(alpha = if (isDarkMode) 0.35f else 0.55f)
+                },
+                border = BorderStroke(1.dp, netColor.copy(alpha = 0.3f)),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = if (uiScale.isCompact) 8.dp else 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        text = if (showTodayOnly) "صافي اليوم" else "الإجمالي",
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Text(
+                        text = MoneyFormatter.formatEgp(displayedNet, currency),
+                        style = if (uiScale.isCompact) MaterialTheme.typography.titleLarge else MaterialTheme.typography.headlineSmall,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = netColor,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.testTag("dashboard_total_balance_value")
+                    )
+                }
+            }
+
+            // Side-by-side Incoming (الوارد) and Outgoing (الصادر)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(if (uiScale.isCompact) 8.dp else 10.dp)
+            ) {
+                // الوارد (Incoming)
+                Surface(
+                    shape = RoundedCornerShape(14.dp),
+                    color = extras.successContainer.copy(alpha = if (isDarkMode) 0.25f else 0.65f),
+                    border = BorderStroke(1.dp, extras.success.copy(alpha = 0.28f)),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Column(
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = if (uiScale.isCompact) 8.dp else 10.dp),
+                        verticalArrangement = Arrangement.spacedBy(2.dp)
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = Icons.Default.ArrowDownward,
+                                contentDescription = "الوارد",
+                                tint = extras.success,
+                                modifier = Modifier.size(15.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = if (showTodayOnly) "وارد اليوم" else "الوارد",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = extras.success,
+                                maxLines = 1
+                            )
+                        }
+                        Text(
+                            text = MoneyFormatter.formatEgp(displayedIncoming, currency),
+                            style = if (uiScale.isCompact) MaterialTheme.typography.titleSmall else MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.testTag("dashboard_incoming_value")
+                        )
+                        if (!showTodayOnly) {
+                            Text(
+                                text = "اليوم: ${MoneyFormatter.formatEgp(summary.todayIncomingPiasters, currency)}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+                }
+
+                // الصادر (Outgoing)
+                Surface(
+                    shape = RoundedCornerShape(14.dp),
+                    color = extras.dangerContainer.copy(alpha = if (isDarkMode) 0.25f else 0.65f),
+                    border = BorderStroke(1.dp, extras.danger.copy(alpha = 0.28f)),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Column(
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = if (uiScale.isCompact) 8.dp else 10.dp),
+                        verticalArrangement = Arrangement.spacedBy(2.dp)
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = Icons.Default.ArrowUpward,
+                                contentDescription = "الصادر",
+                                tint = extras.danger,
+                                modifier = Modifier.size(15.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = if (showTodayOnly) "صادر اليوم" else "الصادر",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = extras.danger,
+                                maxLines = 1
+                            )
+                        }
+                        Text(
+                            text = MoneyFormatter.formatEgp(displayedOutgoing, currency),
+                            style = if (uiScale.isCompact) MaterialTheme.typography.titleSmall else MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.testTag("dashboard_outgoing_value")
+                        )
+                        if (!showTodayOnly) {
+                            Text(
+                                text = "اليوم: ${MoneyFormatter.formatEgp(summary.todaySupplierPaymentsPiasters, currency)}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+                }
+            }
+
+            // Compact Ledger Breakdown Strip (Receivables vs Payables)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Surface(
+                    onClick = onOpenCustomers,
+                    shape = RoundedCornerShape(10.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
+                    modifier = Modifier
+                        .weight(1f)
+                        .heightIn(min = 34.dp)
+                ) {
+                    Text(
+                        text = "لك عند العملاء: ${MoneyFormatter.formatEgp(summary.totalCustomerReceivablesPiasters, currency)}",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.primary,
+                        textAlign = TextAlign.Center,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 7.dp)
+                    )
+                }
+                Surface(
+                    onClick = onOpenSuppliers,
+                    shape = RoundedCornerShape(10.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
+                    modifier = Modifier
+                        .weight(1f)
+                        .heightIn(min = 34.dp)
+                ) {
+                    Text(
+                        text = "عليك للموردين: ${MoneyFormatter.formatEgp(summary.totalSupplierPayablesPiasters, currency)}",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.SemiBold,
+                        color = extras.warning,
+                        textAlign = TextAlign.Center,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 7.dp)
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun BalancePeriodChip(
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(50),
+        color = if (selected) PrimaryBlue else Color.Transparent,
+        modifier = modifier.heightIn(min = 28.dp)
+    ) {
+        Box(
+            contentAlignment = Alignment.Center,
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+        ) {
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+                color = if (selected) Color.White else MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1
+            )
         }
     }
 }
