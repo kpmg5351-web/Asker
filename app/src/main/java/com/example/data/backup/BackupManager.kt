@@ -1,36 +1,44 @@
 package com.example.data.backup
 
+import android.Manifest
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
+import android.content.ContentValues
 import android.content.Context
+import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.net.Uri
+import android.os.Build
+import android.os.Environment
+import android.provider.DocumentsContract
+import android.provider.MediaStore
+import androidx.core.app.NotificationCompat
+import androidx.core.app.NotificationManagerCompat
+import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
 import androidx.room.withTransaction
-import androidx.work.Constraints
 import androidx.work.ExistingPeriodicWorkPolicy
-import androidx.work.ExistingWorkPolicy
-import androidx.work.NetworkType
-import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.workDataOf
+import com.example.MainActivity
+import com.example.R
 import com.example.core.EgyptTime
 import com.example.core.SecurityUtils
 import com.example.data.local.AuditLogEntity
 import com.example.data.local.BackupHistoryEntity
 import com.example.data.local.HesabatyDatabase
-import com.google.android.gms.auth.api.identity.AuthorizationRequest
-import com.google.android.gms.auth.api.identity.Identity
-import com.google.android.gms.common.api.Scope
 import com.squareup.moshi.Moshi
 import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.Calendar
 import java.util.UUID
 import java.util.concurrent.TimeUnit
-import kotlin.coroutines.resume
 
 sealed class BackupOpResult<out T> {
     data class Success<T>(val data: T) : BackupOpResult<T>()
@@ -49,21 +57,32 @@ class BackupManager(
     private val envelopeAdapter = moshi.adapter(EncryptedBackupEnvelope::class.java)
     val driveApi = GoogleDriveApi(moshi)
     private val prefs by lazy {
-        context.getSharedPreferences("hesabaty_auto_drive_prefs", Context.MODE_PRIVATE)
+        context.getSharedPreferences("hesabaty_auto_backup_prefs", Context.MODE_PRIVATE)
     }
 
-    fun isAutoDriveBackupEnabled(tenantId: String): Boolean =
-        prefs.getBoolean("auto_drive_enabled_$tenantId", false)
+    fun getAutoBackupFolderUri(tenantId: String): String? =
+        prefs.getString("auto_folder_uri_$tenantId", null)
 
-    fun setAutoDriveBackupEnabled(tenantId: String, enabled: Boolean) {
-        prefs.edit().putBoolean("auto_drive_enabled_$tenantId", enabled).apply()
+    fun getAutoBackupFolderLabel(tenantId: String): String? =
+        prefs.getString("auto_folder_label_$tenantId", null)
+
+    fun setAutoBackupFolder(tenantId: String, uriString: String?, label: String?) {
+        prefs.edit().apply {
+            if (uriString.isNullOrBlank()) {
+                remove("auto_folder_uri_$tenantId")
+                remove("auto_folder_label_$tenantId")
+            } else {
+                putString("auto_folder_uri_$tenantId", uriString)
+                putString("auto_folder_label_$tenantId", label ?: "مجلد مخصص")
+            }
+        }.apply()
     }
 
-    fun isDriveAuthorized(tenantId: String): Boolean =
-        prefs.getBoolean("drive_authorized_$tenantId", false)
+    fun isDailyDriveReminderEnabled(tenantId: String): Boolean =
+        prefs.getBoolean("daily_drive_reminder_$tenantId", true)
 
-    fun markDriveAuthorized(tenantId: String, authorized: Boolean) {
-        prefs.edit().putBoolean("drive_authorized_$tenantId", authorized).apply()
+    fun setDailyDriveReminderEnabled(tenantId: String, enabled: Boolean) {
+        prefs.edit().putBoolean("daily_drive_reminder_$tenantId", enabled).apply()
     }
 
     fun backupsDirectory(): File {
@@ -161,6 +180,18 @@ class BackupManager(
                 }
             }
 
+            val savedDownloads = exportCopyToDownloads(fileName, bytes)
+            val customFolderUri = getAutoBackupFolderUri(tenantId)
+            val savedCustomFolder = if (!customFolderUri.isNullOrBlank()) {
+                exportCopyToTreeFolder(customFolderUri, fileName, bytes)
+            } else false
+
+            val locationSummary = buildList {
+                add("الهاتف")
+                if (savedDownloads) add("التنزيلات (HesabatyBackups)")
+                if (savedCustomFolder) add("المجلد المخصص")
+            }.joinToString(" + ")
+
             val record = BackupHistoryEntity(
                 id = UUID.randomUUID().toString(),
                 tenantId = tenantId,
@@ -168,7 +199,7 @@ class BackupManager(
                 status = "SUCCESS",
                 fileName = fileName,
                 sizeBytes = bytes.size.toLong(),
-                message = "تم إنشاء نسخة محلية مشفرة (AES-256-GCM)",
+                message = "نسخة مشفرة محفوظة في: $locationSummary",
                 createdByUserId = actorUserId,
                 createdAt = now
             )
@@ -183,7 +214,7 @@ class BackupManager(
                         action = "LOCAL_BACKUP",
                         entityType = "BACKUP",
                         entityId = record.id,
-                        details = "نسخ احتياطي محلي مشفر: $fileName",
+                        details = "نسخ احتياطي مشفر ($locationSummary): $fileName",
                         createdAt = now
                     )
                 )
@@ -359,11 +390,9 @@ class BackupManager(
 
     fun scheduleDailyAutoBackup(tenantId: String, enabled: Boolean, hour: Int, minute: Int) {
         val workName = "hesabaty_daily_backup_$tenantId"
-        val retryWorkName = "hesabaty_drive_retry_$tenantId"
         val wm = WorkManager.getInstance(context)
         if (!enabled) {
             wm.cancelUniqueWork(workName)
-            wm.cancelUniqueWork(retryWorkName)
             return
         }
         val now = Calendar.getInstance(EgyptTime.timeZone)
@@ -376,112 +405,194 @@ class BackupManager(
         val delayMs = (target.timeInMillis - now.timeInMillis).coerceAtLeast(60_000L)
         val request = PeriodicWorkRequestBuilder<AutoBackupWorker>(24, TimeUnit.HOURS)
             .setInitialDelay(delayMs, TimeUnit.MILLISECONDS)
-            .setInputData(workDataOf("tenantId" to tenantId, "driveOnly" to false))
+            .setInputData(workDataOf("tenantId" to tenantId))
             .build()
         wm.enqueueUniquePeriodicWork(workName, ExistingPeriodicWorkPolicy.UPDATE, request)
     }
 
-    fun scheduleDriveRetryWhenOnline(tenantId: String) {
-        val retryWorkName = "hesabaty_drive_retry_$tenantId"
-        val constraints = Constraints.Builder()
-            .setRequiredNetworkType(NetworkType.CONNECTED)
-            .build()
-        val request = OneTimeWorkRequestBuilder<AutoBackupWorker>()
-            .setConstraints(constraints)
-            .setInputData(workDataOf("tenantId" to tenantId, "driveOnly" to true))
-            .build()
-        WorkManager.getInstance(context)
-            .enqueueUniqueWork(retryWorkName, ExistingWorkPolicy.REPLACE, request)
-    }
-
-    suspend fun authorizeDriveSilently(): Pair<String?, String?> = suspendCancellableCoroutine { cont ->
-        try {
-            val authRequest = AuthorizationRequest.builder()
-                .setRequestedScopes(listOf(Scope("https://www.googleapis.com/auth/drive.appdata")))
-                .build()
-            Identity.getAuthorizationClient(context)
-                .authorize(authRequest)
-                .addOnSuccessListener { result ->
-                    if (!cont.isActive) return@addOnSuccessListener
-                    val token = result.accessToken
-                    when {
-                        result.hasResolution() -> {
-                            cont.resume(null to "يتطلب Google Drive إعادة تأكيد الصلاحية من شاشة النسخ الاحتياطي.")
-                        }
-                        !token.isNullOrBlank() -> cont.resume(token to null)
-                        else -> cont.resume(null to "تعذر الحصول على رمز صلاحية Google Drive.")
-                    }
-                }
-                .addOnFailureListener { e ->
-                    if (!cont.isActive) return@addOnFailureListener
-                    cont.resume(
-                        null to "يتطلب الرفع التلقائي إلى Google Drive ربط الحساب وتفعيل OAuth Android Client. (${e.localizedMessage ?: "خطأ غير معروف"})"
-                    )
-                }
-        } catch (e: Exception) {
-            if (cont.isActive) {
-                cont.resume(null to (e.localizedMessage ?: "تعذر بدء مصادقة Google Drive"))
-            }
-        }
-    }
-
     /**
-     * Executes scheduled daily backup:
-     * 1. Always creates an encrypted local backup first (unless [driveOnly] is true).
-     * 2. If Auto-Drive backup is enabled for [tenantId], uploads to Google Drive appDataFolder
-     *    when online, or schedules a connected one-time retry when offline.
+     * Builds an encrypted backup file on disk for instant sharing to the Google Drive app,
+     * WhatsApp, Telegram, or Android's Save Picker without any Google Cloud Console setup.
      */
-    suspend fun runScheduledBackup(
+    suspend fun createBackupFileForShare(
         tenantId: String,
-        driveOnly: Boolean = false
-    ): BackupOpResult<BackupHistoryEntity> {
-        val localResult = if (!driveOnly) {
-            createLocalBackup(
-                tenantId = tenantId,
-                actorUserId = "system_auto_backup",
-                actorUsername = "النسخ التلقائي"
-            )
-        } else {
-            null
-        }
-
-        if (!isAutoDriveBackupEnabled(tenantId)) {
-            return localResult ?: BackupOpResult.Error("النسخ التلقائي على Google Drive غير مفعّل")
-        }
-
-        if (!isOnline()) {
-            scheduleDriveRetryWhenOnline(tenantId)
-            return localResult ?: BackupOpResult.Error("بانتظار توفر اتصال بالإنترنت للرفع إلى Google Drive")
-        }
-
-        val (token, authError) = authorizeDriveSilently()
-        if (token.isNullOrBlank()) {
-            markDriveAuthorized(tenantId, false)
-            val fail = BackupHistoryEntity(
+        actorUserId: String,
+        actorUsername: String,
+        passphrase: String? = null
+    ): BackupOpResult<File> = withContext(Dispatchers.IO) {
+        try {
+            val (fileName, bytes) = buildEncryptedBackupBytes(tenantId, passphrase)
+            val localFile = File(backupsDirectory(), fileName)
+            localFile.writeBytes(bytes)
+            exportCopyToDownloads(fileName, bytes)
+            getAutoBackupFolderUri(tenantId)?.let { uriStr ->
+                exportCopyToTreeFolder(uriStr, fileName, bytes)
+            }
+            val now = EgyptTime.nowMillis()
+            val record = BackupHistoryEntity(
                 id = UUID.randomUUID().toString(),
                 tenantId = tenantId,
                 destination = "GOOGLE_DRIVE",
-                status = "FAILED",
-                fileName = "",
-                message = authError ?: "تعذر الرفع التلقائي إلى Google Drive",
-                createdByUserId = "system_auto_backup",
-                createdAt = EgyptTime.nowMillis()
+                status = "SUCCESS",
+                fileName = fileName,
+                sizeBytes = bytes.size.toLong(),
+                message = "تم تجهيز النسخة المشفرة للحفظ على Google Drive / المشاركة",
+                createdByUserId = actorUserId,
+                createdAt = now
             )
-            db.systemDao().upsertBackupRecord(fail)
-            return localResult ?: BackupOpResult.Error(fail.message)
+            db.systemDao().upsertBackupRecord(record)
+            BackupOpResult.Success(localFile)
+        } catch (e: Exception) {
+            BackupOpResult.Error(e.message ?: "تعذر تجهيز ملف النسخة الاحتياطية")
         }
+    }
 
-        markDriveAuthorized(tenantId, true)
-        val driveRes = uploadToGoogleDrive(
+    fun isGoogleDriveAppInstalled(): Boolean {
+        val drivePkg = "com.google.android.apps.docs"
+        return try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                context.packageManager.getPackageInfo(drivePkg, PackageManager.PackageInfoFlags.of(0))
+            } else {
+                @Suppress("DEPRECATION")
+                context.packageManager.getPackageInfo(drivePkg, 0)
+            }
+            true
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    private fun getShareableUri(backupFile: File): Uri {
+        val authority = "${context.packageName}.fileprovider"
+        return try {
+            FileProvider.getUriForFile(context, authority, backupFile)
+        } catch (_: IllegalArgumentException) {
+            val exportsDir = File(context.cacheDir, "exports").apply { mkdirs() }
+            val cachedCopy = File(exportsDir, backupFile.name)
+            backupFile.copyTo(cachedCopy, overwrite = true)
+            FileProvider.getUriForFile(context, authority, cachedCopy)
+        }
+    }
+
+    fun createSaveToDriveIntent(backupFile: File): Intent? {
+        if (!isGoogleDriveAppInstalled()) return null
+        val contentUri = getShareableUri(backupFile)
+        val intent = Intent(Intent.ACTION_SEND).apply {
+            type = "application/octet-stream"
+            putExtra(Intent.EXTRA_STREAM, contentUri)
+            putExtra(Intent.EXTRA_SUBJECT, backupFile.name)
+            setPackage("com.google.android.apps.docs")
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        return if (intent.resolveActivity(context.packageManager) != null) intent else null
+    }
+
+    fun createShareBackupIntent(backupFile: File): Intent {
+        val contentUri = getShareableUri(backupFile)
+        val shareIntent = Intent(Intent.ACTION_SEND).apply {
+            type = "application/octet-stream"
+            putExtra(Intent.EXTRA_STREAM, contentUri)
+            putExtra(Intent.EXTRA_SUBJECT, backupFile.name)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        return Intent.createChooser(shareIntent, "حفظ أو إرسال النسخة الاحتياطية").apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+    }
+
+    suspend fun runScheduledBackup(tenantId: String): BackupOpResult<BackupHistoryEntity> {
+        val result = createLocalBackup(
             tenantId = tenantId,
             actorUserId = "system_auto_backup",
-            actorUsername = "النسخ التلقائي",
-            accessToken = token
+            actorUsername = "النسخ التلقائي"
         )
-        return when {
-            driveRes is BackupOpResult.Success -> driveRes
-            localResult is BackupOpResult.Success -> localResult
-            else -> driveRes
+        if (result is BackupOpResult.Success && isDailyDriveReminderEnabled(tenantId)) {
+            postDailyBackupNotification(result.data.fileName)
+        }
+        return result
+    }
+
+    private fun exportCopyToDownloads(fileName: String, bytes: ByteArray): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return false
+        return runCatching {
+            val values = ContentValues().apply {
+                put(MediaStore.Downloads.DISPLAY_NAME, fileName)
+                put(MediaStore.Downloads.MIME_TYPE, "application/octet-stream")
+                put(MediaStore.Downloads.RELATIVE_PATH, "${Environment.DIRECTORY_DOWNLOADS}/HesabatyBackups")
+                put(MediaStore.Downloads.IS_PENDING, 1)
+            }
+            val resolver = context.contentResolver
+            val itemUri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values) ?: return false
+            resolver.openOutputStream(itemUri)?.use { it.write(bytes) }
+            values.clear()
+            values.put(MediaStore.Downloads.IS_PENDING, 0)
+            resolver.update(itemUri, values, null, null)
+            true
+        }.getOrDefault(false)
+    }
+
+    private fun exportCopyToTreeFolder(treeUriString: String, fileName: String, bytes: ByteArray): Boolean {
+        return runCatching {
+            val treeUri = Uri.parse(treeUriString)
+            val treeDocId = DocumentsContract.getTreeDocumentId(treeUri)
+            val parentUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, treeDocId)
+            val docUri = DocumentsContract.createDocument(
+                context.contentResolver,
+                parentUri,
+                "application/octet-stream",
+                fileName
+            ) ?: return false
+            context.contentResolver.openOutputStream(docUri)?.use { it.write(bytes) }
+            true
+        }.getOrDefault(false)
+    }
+
+    private fun postDailyBackupNotification(fileName: String) {
+        runCatching {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                val granted = ContextCompat.checkSelfPermission(
+                    context,
+                    Manifest.permission.POST_NOTIFICATIONS
+                ) == PackageManager.PERMISSION_GRANTED
+                if (!granted) return
+            }
+            val channelId = "hesabaty_auto_backup_channel"
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
+                if (manager != null && manager.getNotificationChannel(channelId) == null) {
+                    val channel = NotificationChannel(
+                        channelId,
+                        "النسخ الاحتياطي اليومي",
+                        NotificationManager.IMPORTANCE_DEFAULT
+                    ).apply {
+                        description = "إشعارات إتمام النسخة الاحتياطية اليومية والتذكير بالحفظ على Google Drive"
+                    }
+                    manager.createNotificationChannel(channel)
+                }
+            }
+            val openAppIntent = Intent(context, MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            }
+            val pendingIntent = PendingIntent.getActivity(
+                context,
+                4001,
+                openAppIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+            val notification = NotificationCompat.Builder(context, channelId)
+                .setSmallIcon(R.mipmap.ic_launcher)
+                .setContentTitle("تم حفظ النسخة الاحتياطية اليومية")
+                .setContentText("حُفظت في الهاتف والتنزيلات ($fileName) — اضغط لرفع نسخة إلى Google Drive")
+                .setStyle(
+                    NotificationCompat.BigTextStyle().bigText(
+                        "تم حفظ نسختك المشفرة تلقائيًا في الهاتف ومجلد Downloads/HesabatyBackups ($fileName). اضغط هنا إذا أردت رفعها إلى Google Drive بضغطة واحدة."
+                    )
+                )
+                .setContentIntent(pendingIntent)
+                .setAutoCancel(true)
+                .build()
+            NotificationManagerCompat.from(context).notify(4001, notification)
         }
     }
 }

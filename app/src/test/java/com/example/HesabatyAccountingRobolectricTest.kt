@@ -68,6 +68,11 @@ class HesabatyAccountingRobolectricTest {
 
     @Before
     fun setUp() = runTest {
+        runCatching {
+            val cacheField = androidx.core.content.FileProvider::class.java.getDeclaredField("sCache")
+            cacheField.isAccessible = true
+            (cacheField.get(null) as? MutableMap<*, *>)?.clear()
+        }
         context = ApplicationProvider.getApplicationContext()
         db = HesabatyDatabase.createInMemory(context)
         authRepo = AuthRepository(db, DeviceLicenseManager(context))
@@ -917,25 +922,28 @@ class HesabatyAccountingRobolectricTest {
     }
 
     @Test
-    fun test25_autoDriveBackupToggleAndLocalFallbackWhenOffline() = runTest {
-        assertFalse(backupManager.isAutoDriveBackupEnabled(tenantAId))
-        backupManager.setAutoDriveBackupEnabled(tenantAId, true)
-        assertTrue(backupManager.isAutoDriveBackupEnabled(tenantAId))
+    fun test25_zeroCloudAutoBackupAndSharePreparation() = runTest {
+        assertTrue(backupManager.isDailyDriveReminderEnabled(tenantAId))
+        backupManager.setDailyDriveReminderEnabled(tenantAId, false)
+        assertFalse(backupManager.isDailyDriveReminderEnabled(tenantAId))
 
-        backupManager.markDriveAuthorized(tenantAId, true)
-        assertTrue(backupManager.isDriveAuthorized(tenantAId))
+        backupManager.setAutoBackupFolder(tenantAId, "content://com.android.externalstorage/tree/primary%3ABackups", "Backups")
+        assertEquals("Backups", backupManager.getAutoBackupFolderLabel(tenantAId))
+        backupManager.setAutoBackupFolder(tenantAId, null, null)
+        assertEquals(null, backupManager.getAutoBackupFolderLabel(tenantAId))
 
-        // In Robolectric offline environment, runScheduledBackup still creates local backup safely
-        // and schedules Drive retry when internet becomes available.
-        runCatching {
-            androidx.work.WorkManager.initialize(
-                context,
-                androidx.work.Configuration.Builder().build()
-            )
-        }
-        val res = backupManager.runScheduledBackup(tenantAId, driveOnly = false)
-        assertTrue(res is BackupOpResult.Success)
-        val localFiles = backupManager.listLocalBackupFiles(tenantAId)
-        assertTrue(localFiles.isNotEmpty())
+        val scheduledRes = backupManager.runScheduledBackup(tenantAId)
+        assertTrue(scheduledRes is BackupOpResult.Success)
+
+        val shareFileRes = backupManager.createBackupFileForShare(
+            tenantId = tenantAId,
+            actorUserId = ownerA.id,
+            actorUsername = ownerA.username
+        )
+        assertTrue(shareFileRes is BackupOpResult.Success)
+        val file = (shareFileRes as BackupOpResult.Success).data
+        assertTrue(file.exists())
+        val shareIntent = backupManager.createShareBackupIntent(file)
+        assertNotNull(shareIntent)
     }
 }

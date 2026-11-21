@@ -10,9 +10,14 @@
     <queries>
         <package android:name="com.whatsapp" />
         <package android:name="com.whatsapp.w4b" />
+        <package android:name="com.google.android.apps.docs" />
         <intent>
             <action android:name="android.intent.action.SEND" />
             <data android:mimeType="application/pdf" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.SEND" />
+            <data android:mimeType="application/octet-stream" />
         </intent>
         <intent>
             <action android:name="android.intent.action.VIEW" />

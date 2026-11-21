@@ -142,11 +142,11 @@ class HesabatyViewModel(private val container: AppContainer) : ViewModel() {
     private val _localBackups = MutableStateFlow<List<File>>(emptyList())
     val localBackups: StateFlow<List<File>> = _localBackups.asStateFlow()
 
-    private val _autoDriveBackupEnabled = MutableStateFlow(false)
-    val autoDriveBackupEnabled: StateFlow<Boolean> = _autoDriveBackupEnabled.asStateFlow()
+    private val _autoBackupFolderLabel = MutableStateFlow<String?>(null)
+    val autoBackupFolderLabel: StateFlow<String?> = _autoBackupFolderLabel.asStateFlow()
 
-    private val _driveAuthorized = MutableStateFlow(false)
-    val driveAuthorized: StateFlow<Boolean> = _driveAuthorized.asStateFlow()
+    private val _dailyDriveReminderEnabled = MutableStateFlow(true)
+    val dailyDriveReminderEnabled: StateFlow<Boolean> = _dailyDriveReminderEnabled.asStateFlow()
 
     // Master Admin Observables
     val allTenants: StateFlow<List<TenantEntity>> = authRepo.observeAllTenants()
@@ -1406,43 +1406,51 @@ class HesabatyViewModel(private val container: AppContainer) : ViewModel() {
     fun refreshLocalBackups(tenantId: String? = activeTenantId.value) {
         if (tenantId == null) {
             _localBackups.value = emptyList()
-            _autoDriveBackupEnabled.value = false
-            _driveAuthorized.value = false
+            _autoBackupFolderLabel.value = null
+            _dailyDriveReminderEnabled.value = true
             return
         }
         _localBackups.value = backupManager.listLocalBackupFiles(tenantId)
-        _autoDriveBackupEnabled.value = backupManager.isAutoDriveBackupEnabled(tenantId)
-        _driveAuthorized.value = backupManager.isDriveAuthorized(tenantId)
+        _autoBackupFolderLabel.value = backupManager.getAutoBackupFolderLabel(tenantId)
+        _dailyDriveReminderEnabled.value = backupManager.isDailyDriveReminderEnabled(tenantId)
     }
 
-    fun setAutoDriveBackupEnabled(enabled: Boolean) {
+    fun setAutoBackupFolder(uriString: String?, label: String?) {
         val tid = activeTenantId.value ?: return
-        backupManager.setAutoDriveBackupEnabled(tid, enabled)
-        _autoDriveBackupEnabled.value = enabled
+        backupManager.setAutoBackupFolder(tid, uriString, label)
+        _autoBackupFolderLabel.value = if (uriString.isNullOrBlank()) null else (label ?: "مجلد مخصص")
+        emitMessage(
+            if (uriString.isNullOrBlank()) "تم إلغاء مجلد الحفظ التلقائي المخصص"
+            else "تم تحديد مجلد الحفظ التلقائي بنجاح"
+        )
+    }
+
+    fun setDailyDriveReminderEnabled(enabled: Boolean) {
+        val tid = activeTenantId.value ?: return
+        backupManager.setDailyDriveReminderEnabled(tid, enabled)
+        _dailyDriveReminderEnabled.value = enabled
+        emitMessage(
+            if (enabled) "تم تفعيل إشعار التذكير اليومي لحفظ النسخة على Drive"
+            else "تم إيقاف إشعار التذكير اليومي"
+        )
+    }
+
+    fun prepareBackupForDriveOrShare(passphrase: String?, onReady: (File) -> Unit) {
+        val (tid, actor) = requireShopActor() ?: return
         viewModelScope.launch {
-            val current = appSettings.value ?: AppSettingEntity(tenantId = tid)
-            val updated = if (enabled && !current.autoBackupEnabled) {
-                current.copy(autoBackupEnabled = true).also { accRepo.saveAppSettings(tid, it) }
-            } else {
-                current
+            _isBusy.value = true
+            try {
+                when (val res = backupManager.createBackupFileForShare(tid, actor.id, actor.username, passphrase)) {
+                    is BackupOpResult.Error -> emitMessage(res.message, true)
+                    is BackupOpResult.Success -> {
+                        refreshLocalBackups(tid)
+                        onReady(res.data)
+                    }
+                }
+            } finally {
+                _isBusy.value = false
             }
-            backupManager.scheduleDailyAutoBackup(
-                tenantId = tid,
-                enabled = updated.autoBackupEnabled,
-                hour = updated.autoBackupHour,
-                minute = updated.autoBackupMinute
-            )
-            emitMessage(
-                if (enabled) "تم تفعيل النسخ التلقائي على Google Drive أيضًا"
-                else "تم إيقاف النسخ التلقائي على Google Drive"
-            )
         }
-    }
-
-    fun markDriveAuthorized(authorized: Boolean) {
-        val tid = activeTenantId.value ?: return
-        backupManager.markDriveAuthorized(tid, authorized)
-        _driveAuthorized.value = authorized
     }
 
     fun createLocalBackup(passphrase: String?, exportUri: Uri? = null) {
@@ -1454,7 +1462,7 @@ class HesabatyViewModel(private val container: AppContainer) : ViewModel() {
                     is BackupOpResult.Error -> emitMessage(res.message, true)
                     is BackupOpResult.Success -> {
                         refreshLocalBackups(tid)
-                        emitMessage("تم إنشاء النسخة الاحتياطية المشفرة بنجاح")
+                        emitMessage("تم إنشاء النسخة الاحتياطية المشفرة وحفظها بنجاح")
                     }
                 }
             } finally {
@@ -1493,7 +1501,6 @@ class HesabatyViewModel(private val container: AppContainer) : ViewModel() {
                 when (val res = backupManager.uploadToGoogleDrive(tid, actor.id, actor.username, accessToken, passphrase)) {
                     is BackupOpResult.Error -> emitMessage(res.message, true)
                     is BackupOpResult.Success -> {
-                        markDriveAuthorized(true)
                         refreshLocalBackups(tid)
                         emitMessage("تم رفع النسخة المشفرة إلى Google Drive بنجاح")
                         fetchDriveBackups(accessToken)

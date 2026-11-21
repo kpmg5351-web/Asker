@@ -1,8 +1,10 @@
 package com.example.ui.screens
 
-import android.app.Activity
+import android.Manifest
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -24,11 +26,13 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CloudDone
 import androidx.compose.material.icons.filled.CloudUpload
+import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Restore
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Schedule
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.WifiOff
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -57,8 +61,8 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.core.EgyptTime
 import com.example.ui.components.HesabatyCard
@@ -67,9 +71,6 @@ import com.example.ui.components.SectionHeader
 import com.example.ui.components.StatusBadge
 import com.example.ui.theme.HesabatyThemeExtras
 import com.example.ui.viewmodel.HesabatyViewModel
-import com.google.android.gms.auth.api.identity.AuthorizationRequest
-import com.google.android.gms.auth.api.identity.Identity
-import com.google.android.gms.common.api.Scope
 import java.io.File
 
 @Composable
@@ -81,17 +82,14 @@ fun BackupScreen(
     val settings by viewModel.appSettings.collectAsStateWithLifecycle()
     val history by viewModel.tenantBackupHistory.collectAsStateWithLifecycle()
     val localFiles by viewModel.localBackups.collectAsStateWithLifecycle()
-    val driveFiles by viewModel.driveFiles.collectAsStateWithLifecycle()
-    val autoDriveEnabled by viewModel.autoDriveBackupEnabled.collectAsStateWithLifecycle()
-    val driveAuthorized by viewModel.driveAuthorized.collectAsStateWithLifecycle()
+    val autoFolderLabel by viewModel.autoBackupFolderLabel.collectAsStateWithLifecycle()
+    val dailyDriveReminderEnabled by viewModel.dailyDriveReminderEnabled.collectAsStateWithLifecycle()
     val isBusy by viewModel.isBusy.collectAsStateWithLifecycle()
     val extras = HesabatyThemeExtras.colors
     val uiScale = HesabatyThemeExtras.uiScale
 
     var passphrase by remember { mutableStateOf("") }
-    var driveAccessToken by remember { mutableStateOf<String?>(null) }
     var driveStatusMsg by remember { mutableStateOf<String?>(null) }
-    var pendingDriveAction by remember { mutableStateOf<String?>(null) } // "UPLOAD", "LIST", "AUTHORIZE_ONLY", or "RESTORE:<id>"
     var confirmRestoreFile by remember { mutableStateOf<File?>(null) }
     var showTimeDialog by remember { mutableStateOf(false) }
 
@@ -111,7 +109,7 @@ fun BackupScreen(
         }
     }
 
-    // SAF Import encrypted backup file
+    // SAF Import encrypted backup file (works directly with Google Drive & Phone storage)
     val openDocumentLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
     ) { uri ->
@@ -123,91 +121,51 @@ fun BackupScreen(
         }
     }
 
-    // Google Play Services OAuth Authorization resolution launcher for Google Drive appDataFolder
-    val driveAuthResolutionLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.StartIntentSenderForResult()
-    ) { result ->
-        if (result.resultCode == Activity.RESULT_OK && result.data != null) {
-            try {
-                val authResult = Identity.getAuthorizationClient(context).getAuthorizationResultFromIntent(result.data)
-                val token = authResult.accessToken
-                if (!token.isNullOrBlank()) {
-                    driveAccessToken = token
-                    viewModel.markDriveAuthorized(true)
-                    driveStatusMsg = "تم ربط حساب Google Drive بنجاح"
-                    when (val action = pendingDriveAction) {
-                        "AUTHORIZE_ONLY" -> {
-                            driveStatusMsg = "تم ربط Google Drive وتفعيل النسخ التلقائي اليومي عليه"
-                        }
-                        "UPLOAD" -> viewModel.uploadBackupToGoogleDrive(token, passphrase.takeIf { it.isNotBlank() })
-                        "LIST" -> viewModel.fetchDriveBackups(token)
-                        else -> if (action != null && action.startsWith("RESTORE:")) {
-                            viewModel.restoreFromGoogleDrive(token, action.removePrefix("RESTORE:"), passphrase.takeIf { it.isNotBlank() })
-                        }
-                    }
-                } else {
-                    driveStatusMsg = "لم يتم الحصول على رمز صلاحية Google Drive"
-                }
-            } catch (e: Exception) {
-                driveStatusMsg = "تعذر إكمال مصادقة Google Drive: ${e.localizedMessage ?: "خطأ غير معروف"}"
+    // SAF Persistent folder picker for automatic daily copies
+    val openFolderLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocumentTree()
+    ) { uri ->
+        if (uri != null) {
+            runCatching {
+                val flags = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                context.contentResolver.takePersistableUriPermission(uri, flags)
             }
-        } else {
-            driveStatusMsg = "تم إلغاء ربط حساب Google Drive"
+            val label = uri.lastPathSegment?.substringAfterLast(':')?.ifBlank { "مجلد الهاتف المختار" }
+                ?: "مجلد الهاتف المختار"
+            viewModel.setAutoBackupFolder(uri.toString(), label)
         }
-        pendingDriveAction = null
     }
 
-    fun requestDriveAuthorization(action: String) {
-        pendingDriveAction = action
-        val existingToken = driveAccessToken
-        if (!existingToken.isNullOrBlank()) {
-            viewModel.markDriveAuthorized(true)
-            when {
-                action == "AUTHORIZE_ONLY" -> {
-                    driveStatusMsg = "حساب Google Drive متصل ومُفعّل للنسخ التلقائي"
-                }
-                action == "UPLOAD" -> viewModel.uploadBackupToGoogleDrive(existingToken, passphrase.takeIf { it.isNotBlank() })
-                action == "LIST" -> viewModel.fetchDriveBackups(existingToken)
-                action.startsWith("RESTORE:") -> viewModel.restoreFromGoogleDrive(existingToken, action.removePrefix("RESTORE:"), passphrase.takeIf { it.isNotBlank() })
-            }
-            return
+    // Android 13+ notification permission launcher for daily Drive reminder
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) {
+            viewModel.setDailyDriveReminderEnabled(true)
+        } else {
+            viewModel.setDailyDriveReminderEnabled(false)
+            driveStatusMsg = "الإشعارات غير مفعلة لهذا التطبيق؛ سيستمر النسخ التلقائي على الهاتف ومجلد التنزيلات بصمت."
         }
+    }
 
-        val authRequest = AuthorizationRequest.builder()
-            .setRequestedScopes(listOf(Scope("https://www.googleapis.com/auth/drive.appdata")))
-            .build()
+    fun saveDirectToGoogleDrive() {
+        viewModel.prepareBackupForDriveOrShare(passphrase.takeIf { it.isNotBlank() }) { file ->
+            val driveIntent = viewModel.backupManager.createSaveToDriveIntent(file)
+            if (driveIntent != null) {
+                driveStatusMsg = "تم تجهيز النسخة — اختر حسابك واضغط حفظ داخل Google Drive."
+                context.startActivity(driveIntent)
+            } else {
+                driveStatusMsg = "اختر Google Drive من نافذة الحفظ أو المشاركة لاختيار مكان النسخة."
+                val stamp = EgyptTime.formatDate(EgyptTime.nowMillis()).replace("/", "")
+                createDocumentLauncher.launch("hesabaty_backup_$stamp.hbak")
+            }
+        }
+    }
 
-        Identity.getAuthorizationClient(context)
-            .authorize(authRequest)
-            .addOnSuccessListener { authResult ->
-                if (authResult.hasResolution()) {
-                    val pi = authResult.pendingIntent
-                    if (pi != null) {
-                        driveAuthResolutionLauncher.launch(IntentSenderRequest.Builder(pi.intentSender).build())
-                    }
-                } else {
-                    val token = authResult.accessToken
-                    if (!token.isNullOrBlank()) {
-                        driveAccessToken = token
-                        viewModel.markDriveAuthorized(true)
-                        driveStatusMsg = "حساب Google Drive متصل ومُصرّح له بمساحة التطبيق"
-                        when {
-                            action == "AUTHORIZE_ONLY" -> {
-                                driveStatusMsg = "حساب Google Drive متصل ومُفعّل للنسخ التلقائي اليومي"
-                            }
-                            action == "UPLOAD" -> viewModel.uploadBackupToGoogleDrive(token, passphrase.takeIf { it.isNotBlank() })
-                            action == "LIST" -> viewModel.fetchDriveBackups(token)
-                            action.startsWith("RESTORE:") -> viewModel.restoreFromGoogleDrive(token, action.removePrefix("RESTORE:"), passphrase.takeIf { it.isNotBlank() })
-                        }
-                    } else {
-                        driveStatusMsg = "تعذر الحصول على رمز Google Drive"
-                    }
-                }
-            }
-            .addOnFailureListener { e ->
-                viewModel.markDriveAuthorized(false)
-                driveStatusMsg = "يتطلب Google Drive تفعيل OAuth Android Client في Google Cloud Console لبصمة التطبيق (SHA-1). بياناتك محفوظة محليًا بأمان ويمكنك التصدير الآن. (${e.localizedMessage ?: ""})"
-            }
+    fun shareBackupToAnyApp() {
+        viewModel.prepareBackupForDriveOrShare(passphrase.takeIf { it.isNotBlank() }) { file ->
+            context.startActivity(viewModel.backupManager.createShareBackupIntent(file))
+        }
     }
 
     Scaffold(
@@ -288,13 +246,17 @@ fun BackupScreen(
                 }
             }
 
-            // Google Drive Backup Card
+            // Zero-Cloud Google Drive & Free Cloud Share Card
             item {
                 HesabatyCard(modifier = Modifier.fillMaxWidth()) {
-                    Text("النسخ الاحتياطي عبر Google Drive", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Text(
+                        text = "الحفظ على Google Drive (مجانًا بدون كلاود)",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        text = "يستخدم مساحة التطبيق الخاصة (appDataFolder) عبر Google Drive API v3 الرسمية والمصادقة المعتمدة.",
+                        text = "احفظ نسختك المشفرة مباشرة على تطبيق Google Drive في هاتفك أو شاركها على واتساب وتليجرام دون أي اشتراك أو Google Cloud.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -303,46 +265,46 @@ fun BackupScreen(
                         Text(driveStatusMsg!!, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
                     }
                     Spacer(modifier = Modifier.height(10.dp))
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    Button(
+                        onClick = { saveDirectToGoogleDrive() },
+                        enabled = !isBusy,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 48.dp)
+                            .testTag("drive_backup_now_btn")
                     ) {
-                        Button(
-                            onClick = { requestDriveAuthorization("UPLOAD") },
-                            enabled = !isBusy,
-                            modifier = Modifier.weight(1f).testTag("drive_backup_now_btn")
-                        ) {
-                            Icon(Icons.Default.CloudUpload, contentDescription = null, modifier = Modifier.size(18.dp))
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text("نسخ إلى Drive الآن")
-                        }
+                        Icon(Icons.Default.CloudUpload, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("حفظ النسخة على Google Drive الآن")
+                    }
+                    Spacer(modifier = Modifier.height(8.dp))
+                    @OptIn(ExperimentalLayoutApi::class)
+                    FlowRow(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
                         OutlinedButton(
-                            onClick = { requestDriveAuthorization("LIST") },
+                            onClick = { openDocumentLauncher.launch(arrayOf("*/*")) },
                             enabled = !isBusy,
-                            modifier = Modifier.weight(1f)
+                            modifier = Modifier
+                                .heightIn(min = 48.dp)
+                                .testTag("restore_from_drive_or_file_btn")
                         ) {
                             Icon(Icons.Default.Restore, contentDescription = null, modifier = Modifier.size(18.dp))
                             Spacer(modifier = Modifier.width(6.dp))
-                            Text("عرض نسخ Drive")
+                            Text("استعادة من Drive أو ملف")
                         }
-                    }
-
-                    if (driveFiles.isNotEmpty()) {
-                        Spacer(modifier = Modifier.height(10.dp))
-                        driveFiles.forEach { file ->
-                            Row(
-                                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(file.name, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold)
-                                    Text(file.modifiedTime.orEmpty(), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                }
-                                TextButton(onClick = { requestDriveAuthorization("RESTORE:${file.id}") }) {
-                                    Text("استعادة")
-                                }
-                            }
+                        OutlinedButton(
+                            onClick = { shareBackupToAnyApp() },
+                            enabled = !isBusy,
+                            modifier = Modifier
+                                .heightIn(min = 48.dp)
+                                .testTag("share_backup_other_apps_btn")
+                        ) {
+                            Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("إرسال لواتساب / تليجرام")
                         }
                     }
                 }
@@ -351,7 +313,13 @@ fun BackupScreen(
             // Local Encrypted Backup & SAF Export/Import
             item {
                 HesabatyCard(modifier = Modifier.fillMaxWidth()) {
-                    Text("النسخ الاحتياطي المحلي المشفر", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Text("النسخ الاحتياطي المحلي وتصدير ملف", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = "تُحفظ النسخ داخل التطبيق وفي مجلد التنزيلات (Downloads/HesabatyBackups) لتبقى آمنة حتى إذا حذفت التطبيق.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                     Spacer(modifier = Modifier.height(10.dp))
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -360,7 +328,10 @@ fun BackupScreen(
                         Button(
                             onClick = { viewModel.createLocalBackup(passphrase.takeIf { it.isNotBlank() }) },
                             enabled = !isBusy,
-                            modifier = Modifier.weight(1f).testTag("local_backup_now_btn")
+                            modifier = Modifier
+                                .weight(1f)
+                                .heightIn(min = 48.dp)
+                                .testTag("local_backup_now_btn")
                         ) {
                             if (isBusy) {
                                 CircularProgressIndicator(modifier = Modifier.size(18.dp), color = MaterialTheme.colorScheme.onPrimary, strokeWidth = 2.dp)
@@ -376,7 +347,9 @@ fun BackupScreen(
                                 createDocumentLauncher.launch("hesabaty_backup_$stamp.hbak")
                             },
                             enabled = !isBusy,
-                            modifier = Modifier.weight(1f)
+                            modifier = Modifier
+                                .weight(1f)
+                                .heightIn(min = 48.dp)
                         ) {
                             Text("حفظ نسخة كملف")
                         }
@@ -385,7 +358,9 @@ fun BackupScreen(
                     OutlinedButton(
                         onClick = { openDocumentLauncher.launch(arrayOf("*/*")) },
                         enabled = !isBusy,
-                        modifier = Modifier.fillMaxWidth()
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 48.dp)
                     ) {
                         Icon(Icons.Default.FolderOpen, contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(modifier = Modifier.width(6.dp))
@@ -394,7 +369,7 @@ fun BackupScreen(
                 }
             }
 
-            // Auto Daily Backup Scheduler (WorkManager: Local + Google Drive)
+            // Auto Daily Backup Scheduler (WorkManager: Internal + Downloads + Custom Folder + Daily Reminder)
             item {
                 val autoEnabled = settings?.autoBackupEnabled ?: false
                 val hour = settings?.autoBackupHour ?: 23
@@ -412,6 +387,11 @@ fun BackupScreen(
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
+                            Text(
+                                text = "يحفظ تلقائيًا داخل التطبيق + مجلد Downloads/HesabatyBackups دون أي اشتراك.",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
                         }
                         Switch(
                             checked = autoEnabled,
@@ -421,14 +401,41 @@ fun BackupScreen(
                             modifier = Modifier.testTag("auto_backup_switch")
                         )
                     }
-                    Spacer(modifier = Modifier.height(6.dp))
-                    OutlinedButton(
-                        onClick = { showTimeDialog = true },
-                        modifier = Modifier.heightIn(min = 48.dp)
+                    Spacer(modifier = Modifier.height(8.dp))
+                    @OptIn(ExperimentalLayoutApi::class)
+                    FlowRow(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Icon(Icons.Default.Schedule, contentDescription = null, modifier = Modifier.size(16.dp))
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text("تغيير موعد النسخ اليومي")
+                        OutlinedButton(
+                            onClick = { showTimeDialog = true },
+                            modifier = Modifier.heightIn(min = 48.dp)
+                        ) {
+                            Icon(Icons.Default.Schedule, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("تغيير موعد النسخ اليومي")
+                        }
+                        OutlinedButton(
+                            onClick = { openFolderLauncher.launch(null) },
+                            modifier = Modifier
+                                .heightIn(min = 48.dp)
+                                .testTag("choose_auto_backup_folder_btn")
+                        ) {
+                            Icon(Icons.Default.FolderOpen, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(if (autoFolderLabel != null) "تغيير المجلد ($autoFolderLabel)" else "اختيار مجلد إضافي")
+                        }
+                        if (autoFolderLabel != null) {
+                            TextButton(
+                                onClick = { viewModel.setAutoBackupFolder(null, null) },
+                                modifier = Modifier.heightIn(min = 48.dp)
+                            ) {
+                                Icon(Icons.Default.DeleteOutline, contentDescription = "إزالة المجلد المخصص", modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("إزالة المجلد")
+                            }
+                        }
                     }
                     Spacer(modifier = Modifier.height(10.dp))
                     HorizontalDivider()
@@ -440,32 +447,34 @@ fun BackupScreen(
                     ) {
                         Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
                             Text(
-                                text = "النسخ التلقائي على Google Drive أيضًا",
+                                text = "تذكير يومي لرفع النسخة على Drive",
                                 style = MaterialTheme.typography.titleSmall,
                                 fontWeight = FontWeight.Bold
                             )
                             Text(
-                                text = when {
-                                    autoDriveEnabled && driveAuthorized ->
-                                        "مُفعّل — يُرفع تلقائيًا إلى Drive في الموعد المحدد عند توفر الإنترنت (أو فور عودته)."
-                                    autoDriveEnabled ->
-                                        "مُفعّل — اضغط «نسخ إلى Drive الآن» لإتمام ربط الحساب."
-                                    else ->
-                                        "رفع النسخة المشفرة يوميًا إلى Google Drive مع النسخة المحلية."
-                                },
+                                text = "يرسل إشعارًا بعد النسخ التلقائي لتتمكن من رفع النسخة لتطبيق Google Drive بضغطة واحدة دون حاجة لحساب Google Cloud.",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
                         Switch(
-                            checked = autoDriveEnabled,
+                            checked = dailyDriveReminderEnabled,
                             onCheckedChange = { enabled ->
-                                viewModel.setAutoDriveBackupEnabled(enabled)
-                                if (enabled && driveAccessToken.isNullOrBlank()) {
-                                    requestDriveAuthorization("AUTHORIZE_ONLY")
+                                if (enabled && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                                    val granted = ContextCompat.checkSelfPermission(
+                                        context,
+                                        Manifest.permission.POST_NOTIFICATIONS
+                                    ) == PackageManager.PERMISSION_GRANTED
+                                    if (granted) {
+                                        viewModel.setDailyDriveReminderEnabled(true)
+                                    } else {
+                                        notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                                    }
+                                } else {
+                                    viewModel.setDailyDriveReminderEnabled(enabled)
                                 }
                             },
-                            modifier = Modifier.testTag("auto_drive_backup_switch")
+                            modifier = Modifier.testTag("auto_drive_reminder_switch")
                         )
                     }
                 }
