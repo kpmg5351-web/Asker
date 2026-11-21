@@ -81,13 +81,36 @@ object EgyptTime {
     }
 
     fun formatTimeHm(millis: Long): String {
-        val sdf = SimpleDateFormat("hh:mm a", arabicLocale)
-        sdf.timeZone = timeZone
-        return sdf.format(Date(millis))
+        val cal = Calendar.getInstance(timeZone).apply { timeInMillis = millis }
+        val h12 = cal.get(Calendar.HOUR).let { if (it == 0) 12 else it }
+        val min = cal.get(Calendar.MINUTE)
+        val amPm = if (cal.get(Calendar.AM_PM) == Calendar.AM) "ص" else "م"
+        return String.format(Locale.US, "%02d:%02d %s", h12, min, amPm)
     }
 
-    fun formatTimeHms24(millis: Long): String {
-        val sdf = SimpleDateFormat("HH:mm:ss", Locale.US)
+    fun formatTimeHms12(millis: Long): String {
+        val cal = Calendar.getInstance(timeZone).apply { timeInMillis = millis }
+        val h12 = cal.get(Calendar.HOUR).let { if (it == 0) 12 else it }
+        val min = cal.get(Calendar.MINUTE)
+        val sec = cal.get(Calendar.SECOND)
+        val amPm = if (cal.get(Calendar.AM_PM) == Calendar.AM) "ص" else "م"
+        return String.format(Locale.US, "%02d:%02d:%02d %s", h12, min, sec, amPm)
+    }
+
+    fun formatHourMinute12(hour24: Int, minute: Int): String {
+        val normalizedHour = hour24.coerceIn(0, 23)
+        val normalizedMin = minute.coerceIn(0, 59)
+        val h12 = when {
+            normalizedHour == 0 -> 12
+            normalizedHour > 12 -> normalizedHour - 12
+            else -> normalizedHour
+        }
+        val amPm = if (normalizedHour < 12) "ص" else "م"
+        return String.format(Locale.US, "%02d:%02d %s", h12, normalizedMin, amPm)
+    }
+
+    fun formatFileStampTime(millis: Long): String {
+        val sdf = SimpleDateFormat("HHmmss", Locale.US)
         sdf.timeZone = timeZone
         return sdf.format(Date(millis))
     }
@@ -97,7 +120,7 @@ object EgyptTime {
     }
 
     fun formatDateTimeSeconds(millis: Long): String {
-        return "${formatDate(millis)} ${formatTimeHms24(millis)}"
+        return "${formatDate(millis)} - ${formatTimeHms12(millis)}"
     }
 
     fun formatEpochDay(epochDayYyyymmdd: Long): String {

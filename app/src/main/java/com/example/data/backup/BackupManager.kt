@@ -111,7 +111,7 @@ class BackupManager(
             createdAtMillis = now
         )
         val envelopeBytes = envelopeAdapter.toJson(envelope).toByteArray(Charsets.UTF_8)
-        val stamp = EgyptTime.formatDate(now).replace("/", "") + "_" + EgyptTime.formatTimeHms24(now).replace(":", "")
+        val stamp = EgyptTime.formatDate(now).replace("/", "") + "_" + EgyptTime.formatFileStampTime(now)
         val fileName = "hesabaty_${tenantId.take(16)}_$stamp.hbak"
         fileName to envelopeBytes
     }

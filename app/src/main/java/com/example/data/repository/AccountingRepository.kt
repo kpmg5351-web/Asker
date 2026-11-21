@@ -1192,7 +1192,7 @@ class AccountingRepository(private val db: HesabatyDatabase) {
                 "ADD_DAILY_WITHDRAWAL",
                 "DAILY_WITHDRAWAL",
                 dailyInvoiceId,
-                "إضافة سحبة (${item.description}) بقيمة ${MoneyFormatter.formatEgp(lineTotal)} في ${EgyptTime.formatTimeHms24(recordedAtMillis)}"
+                "إضافة سحبة (${item.description}) بقيمة ${MoneyFormatter.formatEgp(lineTotal)} في ${EgyptTime.formatTimeHms12(recordedAtMillis)}"
             )
             RepoResult.Success(item)
         }

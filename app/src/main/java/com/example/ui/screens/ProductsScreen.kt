@@ -1334,6 +1334,7 @@ private fun AdjustStockDialog(
  * Reusable searchable picker allowing the shop owner to optionally choose any saved product
  * inside NewSaleScreen or DailyWithdrawalDetailScreen, or quickly create a new one on the spot.
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun ProductPickerDialog(
     products: List<ProductEntity>,

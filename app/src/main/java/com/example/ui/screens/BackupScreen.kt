@@ -6,17 +6,21 @@ import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CloudDone
 import androidx.compose.material.icons.filled.CloudUpload
@@ -29,6 +33,7 @@ import androidx.compose.material.icons.filled.WifiOff
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -41,7 +46,6 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -50,7 +54,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.core.EgyptTime
@@ -77,6 +83,7 @@ fun BackupScreen(
     val driveFiles by viewModel.driveFiles.collectAsStateWithLifecycle()
     val isBusy by viewModel.isBusy.collectAsStateWithLifecycle()
     val extras = HesabatyThemeExtras.colors
+    val uiScale = HesabatyThemeExtras.uiScale
 
     var passphrase by remember { mutableStateOf("") }
     var driveAccessToken by remember { mutableStateOf<String?>(null) }
@@ -200,8 +207,8 @@ fun BackupScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding),
-            contentPadding = PaddingValues(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+            contentPadding = PaddingValues(uiScale.screenPadding),
+            verticalArrangement = Arrangement.spacedBy(uiScale.sectionSpacing)
         ) {
             // Offline-First Status Card
             item {
@@ -385,7 +392,7 @@ fun BackupScreen(
                         Column(modifier = Modifier.weight(1f)) {
                             Text("نسخ احتياطي تلقائي يومي", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
                             Text(
-                                text = "الموعد المحدد: ${String.format("%02d:%02d", hour, minute)} بتوقيت مصر",
+                                text = "الموعد المحدد: ${EgyptTime.formatHourMinute12(hour, minute)} بتوقيت مصر",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -489,38 +496,81 @@ fun BackupScreen(
     }
 
     if (showTimeDialog) {
-        var h by remember { mutableIntStateOf(settings?.autoBackupHour ?: 23) }
-        var m by remember { mutableIntStateOf(settings?.autoBackupMinute ?: 0) }
+        val savedHour24 = (settings?.autoBackupHour ?: 23).coerceIn(0, 23)
+        val initialHour12 = when {
+            savedHour24 == 0 -> 12
+            savedHour24 > 12 -> savedHour24 - 12
+            else -> savedHour24
+        }
+        var hour12Text by remember { mutableStateOf(initialHour12.toString()) }
+        var minuteText by remember { mutableStateOf((settings?.autoBackupMinute ?: 0).coerceIn(0, 59).toString().padStart(2, '0')) }
+        var isPm by remember { mutableStateOf(savedHour24 >= 12) }
+
         AlertDialog(
             onDismissRequest = { showTimeDialog = false },
-            title = { Text("تحديد موعد النسخ التلقائي اليومي") },
+            title = { Text("تحديد موعد النسخ التلقائي اليومي (نظام 12 ساعة)", fontWeight = FontWeight.Bold) },
             text = {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    OutlinedTextField(
-                        value = h.toString(),
-                        onValueChange = { h = it.toIntOrNull()?.coerceIn(0, 23) ?: h },
-                        label = { Text("الساعة (0-23)") },
-                        singleLine = true,
-                        modifier = Modifier.weight(1f)
-                    )
-                    OutlinedTextField(
-                        value = m.toString(),
-                        onValueChange = { m = it.toIntOrNull()?.coerceIn(0, 59) ?: m },
-                        label = { Text("الدقيقة (0-59)") },
-                        singleLine = true,
-                        modifier = Modifier.weight(1f)
-                    )
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        OutlinedTextField(
+                            value = hour12Text,
+                            onValueChange = { raw ->
+                                val filtered = raw.filter { it.isDigit() }.take(2)
+                                hour12Text = filtered
+                            },
+                            label = { Text("الساعة (1-12)") },
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            modifier = Modifier.weight(1f)
+                        )
+                        OutlinedTextField(
+                            value = minuteText,
+                            onValueChange = { raw ->
+                                val filtered = raw.filter { it.isDigit() }.take(2)
+                                minuteText = filtered
+                            },
+                            label = { Text("الدقيقة (0-59)") },
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                    @OptIn(ExperimentalLayoutApi::class)
+                    FlowRow(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        FilterChip(
+                            selected = !isPm,
+                            onClick = { isPm = false },
+                            label = { Text("صباحًا (ص)") }
+                        )
+                        FilterChip(
+                            selected = isPm,
+                            onClick = { isPm = true },
+                            label = { Text("مساءً (م)") }
+                        )
+                    }
                 }
             },
             confirmButton = {
                 Button(
                     onClick = {
+                        val h12 = (hour12Text.toIntOrNull() ?: initialHour12).coerceIn(1, 12)
+                        val m = (minuteText.toIntOrNull() ?: 0).coerceIn(0, 59)
+                        val h24 = when {
+                            !isPm && h12 == 12 -> 0
+                            !isPm -> h12
+                            isPm && h12 == 12 -> 12
+                            else -> h12 + 12
+                        }
                         showTimeDialog = false
                         viewModel.updateAppSettings {
-                            it.copy(autoBackupEnabled = true, autoBackupHour = h, autoBackupMinute = m)
+                            it.copy(autoBackupEnabled = true, autoBackupHour = h24, autoBackupMinute = m)
                         }
                     }
                 ) { Text("حفظ الموعد") }

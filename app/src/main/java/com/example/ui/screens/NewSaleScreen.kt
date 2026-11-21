@@ -255,8 +255,7 @@ fun NewSaleScreen(
                     FlowRow(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalArrangement = Arrangement.spacedBy(2.dp),
-                        itemVerticalAlignment = Alignment.CenterVertically
+                        verticalArrangement = Arrangement.spacedBy(2.dp)
                     ) {
                         Text("2. تفاصيل البيع والمبالغ", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
                         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -696,7 +695,7 @@ fun NewSaleScreen(
                         FlowRow(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
-                            itemVerticalAlignment = Alignment.CenterVertically
+                            verticalArrangement = Arrangement.spacedBy(2.dp)
                         ) {
                             Text("جدول الدفعات المجدولة (بدون فوائد)", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
                             TextButton(

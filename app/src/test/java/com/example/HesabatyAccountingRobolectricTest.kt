@@ -845,4 +845,22 @@ class HesabatyAccountingRobolectricTest {
         assertTrue(pngFile.exists())
         assertTrue(pngFile.length() > 1000L)
     }
+
+    @Test
+    fun test23_egyptTimeUses12HourArabicFormat() {
+        assertEquals("12:00 ص", EgyptTime.formatHourMinute12(0, 0))
+        assertEquals("09:05 ص", EgyptTime.formatHourMinute12(9, 5))
+        assertEquals("12:00 م", EgyptTime.formatHourMinute12(12, 0))
+        assertEquals("03:45 م", EgyptTime.formatHourMinute12(15, 45))
+        assertEquals("11:30 م", EgyptTime.formatHourMinute12(23, 30))
+
+        val cal = java.util.Calendar.getInstance(EgyptTime.timeZone).apply {
+            set(2026, java.util.Calendar.NOVEMBER, 21, 21, 15, 42)
+            set(java.util.Calendar.MILLISECOND, 0)
+        }
+        val millis = cal.timeInMillis
+        assertEquals("09:15 م", EgyptTime.formatTimeHm(millis))
+        assertEquals("09:15:42 م", EgyptTime.formatTimeHms12(millis))
+        assertTrue(EgyptTime.formatDateTimeSeconds(millis).endsWith("09:15:42 م"))
+    }
 }

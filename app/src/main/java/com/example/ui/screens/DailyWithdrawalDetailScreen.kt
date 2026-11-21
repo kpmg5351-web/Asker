@@ -142,7 +142,7 @@ fun DailyWithdrawalDetailScreen(
                         unitPricePiasters = it.unitPricePiasters,
                         quantityMilli = it.quantityMilli,
                         lineTotalPiasters = it.lineTotalPiasters,
-                        timeLabel = EgyptTime.formatTimeHms24(it.recordedAtMillis)
+                        timeLabel = EgyptTime.formatTimeHms12(it.recordedAtMillis)
                     )
                 }
             },
@@ -232,12 +232,13 @@ fun DailyWithdrawalDetailScreen(
             return@Scaffold
         }
 
+        val uiScale = HesabatyThemeExtras.uiScale
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding),
-            contentPadding = PaddingValues(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+            contentPadding = PaddingValues(uiScale.screenPadding),
+            verticalArrangement = Arrangement.spacedBy(uiScale.sectionSpacing)
         ) {
             // Summary Header Card
             item {
@@ -378,7 +379,7 @@ fun DailyWithdrawalDetailScreen(
                                     style = MaterialTheme.typography.bodySmall
                                 )
                                 Text(
-                                    text = "الوقت: ${EgyptTime.formatDate(item.recordedAtMillis)}  —  ${EgyptTime.formatTimeHms24(item.recordedAtMillis)}",
+                                    text = "الوقت: ${EgyptTime.formatDate(item.recordedAtMillis)}  —  ${EgyptTime.formatTimeHms12(item.recordedAtMillis)}",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.primary
                                 )

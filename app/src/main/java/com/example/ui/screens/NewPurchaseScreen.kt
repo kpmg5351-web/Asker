@@ -239,8 +239,7 @@ fun NewPurchaseScreen(
                     FlowRow(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalArrangement = Arrangement.spacedBy(2.dp),
-                        itemVerticalAlignment = Alignment.CenterVertically
+                        verticalArrangement = Arrangement.spacedBy(2.dp)
                     ) {
                         Text("2. تفاصيل المشتريات والأصناف", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
                         Row(verticalAlignment = Alignment.CenterVertically) {
