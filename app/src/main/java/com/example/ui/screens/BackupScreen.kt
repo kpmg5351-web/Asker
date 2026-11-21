@@ -34,6 +34,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -81,6 +82,8 @@ fun BackupScreen(
     val history by viewModel.tenantBackupHistory.collectAsStateWithLifecycle()
     val localFiles by viewModel.localBackups.collectAsStateWithLifecycle()
     val driveFiles by viewModel.driveFiles.collectAsStateWithLifecycle()
+    val autoDriveEnabled by viewModel.autoDriveBackupEnabled.collectAsStateWithLifecycle()
+    val driveAuthorized by viewModel.driveAuthorized.collectAsStateWithLifecycle()
     val isBusy by viewModel.isBusy.collectAsStateWithLifecycle()
     val extras = HesabatyThemeExtras.colors
     val uiScale = HesabatyThemeExtras.uiScale
@@ -88,7 +91,7 @@ fun BackupScreen(
     var passphrase by remember { mutableStateOf("") }
     var driveAccessToken by remember { mutableStateOf<String?>(null) }
     var driveStatusMsg by remember { mutableStateOf<String?>(null) }
-    var pendingDriveAction by remember { mutableStateOf<String?>(null) } // "UPLOAD", "LIST", or "RESTORE:<id>"
+    var pendingDriveAction by remember { mutableStateOf<String?>(null) } // "UPLOAD", "LIST", "AUTHORIZE_ONLY", or "RESTORE:<id>"
     var confirmRestoreFile by remember { mutableStateOf<File?>(null) }
     var showTimeDialog by remember { mutableStateOf(false) }
 
@@ -130,8 +133,12 @@ fun BackupScreen(
                 val token = authResult.accessToken
                 if (!token.isNullOrBlank()) {
                     driveAccessToken = token
+                    viewModel.markDriveAuthorized(true)
                     driveStatusMsg = "تم ربط حساب Google Drive بنجاح"
                     when (val action = pendingDriveAction) {
+                        "AUTHORIZE_ONLY" -> {
+                            driveStatusMsg = "تم ربط Google Drive وتفعيل النسخ التلقائي اليومي عليه"
+                        }
                         "UPLOAD" -> viewModel.uploadBackupToGoogleDrive(token, passphrase.takeIf { it.isNotBlank() })
                         "LIST" -> viewModel.fetchDriveBackups(token)
                         else -> if (action != null && action.startsWith("RESTORE:")) {
@@ -154,7 +161,11 @@ fun BackupScreen(
         pendingDriveAction = action
         val existingToken = driveAccessToken
         if (!existingToken.isNullOrBlank()) {
+            viewModel.markDriveAuthorized(true)
             when {
+                action == "AUTHORIZE_ONLY" -> {
+                    driveStatusMsg = "حساب Google Drive متصل ومُفعّل للنسخ التلقائي"
+                }
                 action == "UPLOAD" -> viewModel.uploadBackupToGoogleDrive(existingToken, passphrase.takeIf { it.isNotBlank() })
                 action == "LIST" -> viewModel.fetchDriveBackups(existingToken)
                 action.startsWith("RESTORE:") -> viewModel.restoreFromGoogleDrive(existingToken, action.removePrefix("RESTORE:"), passphrase.takeIf { it.isNotBlank() })
@@ -178,8 +189,12 @@ fun BackupScreen(
                     val token = authResult.accessToken
                     if (!token.isNullOrBlank()) {
                         driveAccessToken = token
+                        viewModel.markDriveAuthorized(true)
                         driveStatusMsg = "حساب Google Drive متصل ومُصرّح له بمساحة التطبيق"
                         when {
+                            action == "AUTHORIZE_ONLY" -> {
+                                driveStatusMsg = "حساب Google Drive متصل ومُفعّل للنسخ التلقائي اليومي"
+                            }
                             action == "UPLOAD" -> viewModel.uploadBackupToGoogleDrive(token, passphrase.takeIf { it.isNotBlank() })
                             action == "LIST" -> viewModel.fetchDriveBackups(token)
                             action.startsWith("RESTORE:") -> viewModel.restoreFromGoogleDrive(token, action.removePrefix("RESTORE:"), passphrase.takeIf { it.isNotBlank() })
@@ -190,6 +205,7 @@ fun BackupScreen(
                 }
             }
             .addOnFailureListener { e ->
+                viewModel.markDriveAuthorized(false)
                 driveStatusMsg = "يتطلب Google Drive تفعيل OAuth Android Client في Google Cloud Console لبصمة التطبيق (SHA-1). بياناتك محفوظة محليًا بأمان ويمكنك التصدير الآن. (${e.localizedMessage ?: ""})"
             }
     }
@@ -378,7 +394,7 @@ fun BackupScreen(
                 }
             }
 
-            // Auto Daily Backup Scheduler (WorkManager)
+            // Auto Daily Backup Scheduler (WorkManager: Local + Google Drive)
             item {
                 val autoEnabled = settings?.autoBackupEnabled ?: false
                 val hour = settings?.autoBackupHour ?: 23
@@ -389,7 +405,7 @@ fun BackupScreen(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Column(modifier = Modifier.weight(1f)) {
+                        Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
                             Text("نسخ احتياطي تلقائي يومي", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
                             Text(
                                 text = "الموعد المحدد: ${EgyptTime.formatHourMinute12(hour, minute)} بتوقيت مصر",
@@ -401,14 +417,56 @@ fun BackupScreen(
                             checked = autoEnabled,
                             onCheckedChange = { enabled ->
                                 viewModel.updateAppSettings { it.copy(autoBackupEnabled = enabled) }
-                            }
+                            },
+                            modifier = Modifier.testTag("auto_backup_switch")
                         )
                     }
                     Spacer(modifier = Modifier.height(6.dp))
-                    OutlinedButton(onClick = { showTimeDialog = true }) {
+                    OutlinedButton(
+                        onClick = { showTimeDialog = true },
+                        modifier = Modifier.heightIn(min = 48.dp)
+                    ) {
                         Icon(Icons.Default.Schedule, contentDescription = null, modifier = Modifier.size(16.dp))
                         Spacer(modifier = Modifier.width(6.dp))
                         Text("تغيير موعد النسخ اليومي")
+                    }
+                    Spacer(modifier = Modifier.height(10.dp))
+                    HorizontalDivider()
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
+                            Text(
+                                text = "النسخ التلقائي على Google Drive أيضًا",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                text = when {
+                                    autoDriveEnabled && driveAuthorized ->
+                                        "مُفعّل — يُرفع تلقائيًا إلى Drive في الموعد المحدد عند توفر الإنترنت (أو فور عودته)."
+                                    autoDriveEnabled ->
+                                        "مُفعّل — اضغط «نسخ إلى Drive الآن» لإتمام ربط الحساب."
+                                    else ->
+                                        "رفع النسخة المشفرة يوميًا إلى Google Drive مع النسخة المحلية."
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = autoDriveEnabled,
+                            onCheckedChange = { enabled ->
+                                viewModel.setAutoDriveBackupEnabled(enabled)
+                                if (enabled && driveAccessToken.isNullOrBlank()) {
+                                    requestDriveAuthorization("AUTHORIZE_ONLY")
+                                }
+                            },
+                            modifier = Modifier.testTag("auto_drive_backup_switch")
+                        )
                     }
                 }
             }

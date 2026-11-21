@@ -12,17 +12,21 @@ class AutoBackupWorker(
 
     override suspend fun doWork(): Result {
         val tenantId = inputData.getString("tenantId") ?: return Result.failure()
+        val driveOnly = inputData.getBoolean("driveOnly", false)
         val db = HesabatyDatabase.getInstance(applicationContext)
         val backupManager = BackupManager(applicationContext, db)
 
-        val localResult = backupManager.createLocalBackup(
+        if (driveOnly && !backupManager.isOnline()) {
+            return Result.retry()
+        }
+
+        val result = backupManager.runScheduledBackup(
             tenantId = tenantId,
-            actorUserId = "system_auto_backup",
-            actorUsername = "النسخ التلقائي"
+            driveOnly = driveOnly
         )
-        return when (localResult) {
+        return when (result) {
             is BackupOpResult.Success -> Result.success()
-            is BackupOpResult.Error -> Result.retry()
+            is BackupOpResult.Error -> if (driveOnly) Result.retry() else Result.retry()
         }
     }
 }

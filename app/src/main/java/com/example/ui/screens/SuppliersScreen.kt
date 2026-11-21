@@ -45,6 +45,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.core.MoneyFormatter
+import com.example.ui.components.ContactPickerButton
 import com.example.ui.components.EmptyStateView
 import com.example.ui.components.HesabatyCard
 import com.example.ui.components.HesabatyTopBar
@@ -255,6 +256,16 @@ fun AddSupplierDialog(
                 modifier = Modifier.verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
+                ContactPickerButton(
+                    label = "اختيار الاسم والرقم من جهات الاتصال",
+                    testTag = "pick_supplier_contact_btn",
+                    onContactPicked = { contact ->
+                        if (contact.name.isNotBlank()) name = contact.name
+                        if (contact.phone.isNotBlank()) phone = contact.phone
+                        errorMsg = null
+                    },
+                    onError = { errorMsg = it }
+                )
                 OutlinedTextField(
                     value = name,
                     onValueChange = { name = it; errorMsg = null },
@@ -268,7 +279,7 @@ fun AddSupplierDialog(
                     label = { Text("رقم الهاتف") },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier.fillMaxWidth().testTag("supplier_phone_input")
                 )
                 OutlinedTextField(
                     value = waPhone,

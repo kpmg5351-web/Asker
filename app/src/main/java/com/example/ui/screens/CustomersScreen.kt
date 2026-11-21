@@ -44,6 +44,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.core.MoneyFormatter
 import com.example.data.local.CustomerAccountStatus
+import com.example.ui.components.ContactPickerButton
 import com.example.ui.components.EmptyStateView
 import com.example.ui.components.HesabatyCard
 import com.example.ui.components.HesabatyTopBar
@@ -291,6 +292,16 @@ fun AddCustomerDialog(
                 modifier = Modifier.verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
+                ContactPickerButton(
+                    label = "اختيار الاسم والرقم من جهات الاتصال",
+                    testTag = "pick_customer_contact_btn",
+                    onContactPicked = { contact ->
+                        if (contact.name.isNotBlank()) name = contact.name
+                        if (contact.phone.isNotBlank()) phone = contact.phone
+                        err = null
+                    },
+                    onError = { err = it }
+                )
                 OutlinedTextField(
                     value = name,
                     onValueChange = { name = it; err = null },
@@ -304,7 +315,7 @@ fun AddCustomerDialog(
                     label = { Text("رقم الهاتف") },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier.fillMaxWidth().testTag("customer_phone_input")
                 )
                 OutlinedTextField(
                     value = waPhone,

@@ -1,7 +1,15 @@
 package com.example
 
+import android.content.ContentProvider
+import android.content.ContentValues
 import android.content.Context
+import android.database.Cursor
+import android.database.MatrixCursor
+import android.net.Uri
+import android.provider.ContactsContract
 import androidx.test.core.app.ApplicationProvider
+import com.example.core.ContactPickResult
+import com.example.core.ContactPickerHelper
 import com.example.core.DeviceLicenseManager
 import com.example.core.EgyptTime
 import com.example.core.MoneyFormatter
@@ -862,5 +870,72 @@ class HesabatyAccountingRobolectricTest {
         assertEquals("09:15 م", EgyptTime.formatTimeHm(millis))
         assertEquals("09:15:42 م", EgyptTime.formatTimeHms12(millis))
         assertTrue(EgyptTime.formatDateTimeSeconds(millis).endsWith("09:15:42 م"))
+    }
+
+    @Test
+    fun test24_contactPhoneCleaningAndContactUriExtraction() {
+        assertEquals("01099762204", PhoneUtils.cleanPickedContactPhone("+20 109-976-2204"))
+        assertEquals("01099762204", PhoneUtils.cleanPickedContactPhone("00201099762204"))
+        assertEquals("01099762204", PhoneUtils.cleanPickedContactPhone("+2001099762204"))
+        assertEquals("01099762204", PhoneUtils.cleanPickedContactPhone("\u200E(٠١٠) ٩٩٧٦-٢٢٠٤\u200F"))
+        assertEquals("+966501234567", PhoneUtils.cleanPickedContactPhone("+966 50 123 4567"))
+
+        val authority = "com.example.test.contacts"
+        org.robolectric.Shadows.shadowOf(context.contentResolver)
+        val provider = object : ContentProvider() {
+            override fun onCreate(): Boolean = true
+            override fun query(
+                uri: Uri,
+                projection: Array<out String>?,
+                selection: String?,
+                selectionArgs: Array<out String>?,
+                sortOrder: String?
+            ): Cursor {
+                return MatrixCursor(
+                    arrayOf(
+                        ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME,
+                        ContactsContract.CommonDataKinds.Phone.NUMBER
+                    )
+                ).apply {
+                    addRow(arrayOf("محمد عبد الرحمن", "+20 101 234 5678"))
+                }
+            }
+            override fun getType(uri: Uri): String? = null
+            override fun insert(uri: Uri, values: ContentValues?): Uri? = null
+            override fun delete(uri: Uri, selection: String?, selectionArgs: Array<out String>?): Int = 0
+            override fun update(uri: Uri, values: ContentValues?, selection: String?, selectionArgs: Array<out String>?): Int = 0
+        }
+        org.robolectric.Robolectric.buildContentProvider(provider::class.java)
+        org.robolectric.shadows.ShadowContentResolver.registerProviderInternal(authority, provider)
+
+        val fakeContactUri = Uri.parse("content://$authority/data/1")
+        val extracted = ContactPickerHelper.extractContactFromUri(context.contentResolver, fakeContactUri)
+        assertTrue(extracted is ContactPickResult.Success)
+        val contact = (extracted as ContactPickResult.Success).contact
+        assertEquals("محمد عبد الرحمن", contact.name)
+        assertEquals("01012345678", contact.phone)
+    }
+
+    @Test
+    fun test25_autoDriveBackupToggleAndLocalFallbackWhenOffline() = runTest {
+        assertFalse(backupManager.isAutoDriveBackupEnabled(tenantAId))
+        backupManager.setAutoDriveBackupEnabled(tenantAId, true)
+        assertTrue(backupManager.isAutoDriveBackupEnabled(tenantAId))
+
+        backupManager.markDriveAuthorized(tenantAId, true)
+        assertTrue(backupManager.isDriveAuthorized(tenantAId))
+
+        // In Robolectric offline environment, runScheduledBackup still creates local backup safely
+        // and schedules Drive retry when internet becomes available.
+        runCatching {
+            androidx.work.WorkManager.initialize(
+                context,
+                androidx.work.Configuration.Builder().build()
+            )
+        }
+        val res = backupManager.runScheduledBackup(tenantAId, driveOnly = false)
+        assertTrue(res is BackupOpResult.Success)
+        val localFiles = backupManager.listLocalBackupFiles(tenantAId)
+        assertTrue(localFiles.isNotEmpty())
     }
 }
