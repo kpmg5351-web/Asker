@@ -401,3 +401,27 @@ interface PurchaseInvoiceDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertPurchaseInvoiceItems(items: List<PurchaseInvoiceItemEntity>)
 }
+
+@Dao
+interface QuickSaleDao {
+    @Query("SELECT * FROM quick_sales WHERE tenantId = :tenantId ORDER BY createdAt DESC")
+    fun observeQuickSales(tenantId: String): Flow<List<QuickSaleEntity>>
+
+    @Query("SELECT * FROM quick_sales WHERE tenantId = :tenantId ORDER BY createdAt DESC")
+    suspend fun getQuickSales(tenantId: String): List<QuickSaleEntity>
+
+    @Query("SELECT * FROM quick_sales WHERE tenantId = :tenantId AND id = :quickSaleId LIMIT 1")
+    suspend fun getQuickSaleById(tenantId: String, quickSaleId: String): QuickSaleEntity?
+
+    @Query("SELECT * FROM quick_sales WHERE tenantId = :tenantId AND idempotencyKey = :key LIMIT 1")
+    suspend fun getByIdempotencyKey(tenantId: String, key: String): QuickSaleEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertQuickSale(sale: QuickSaleEntity)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertQuickSales(sales: List<QuickSaleEntity>)
+
+    @Query("DELETE FROM quick_sales WHERE tenantId = :tenantId AND id = :quickSaleId")
+    suspend fun deleteQuickSale(tenantId: String, quickSaleId: String)
+}

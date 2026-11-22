@@ -18,6 +18,7 @@ import com.example.data.local.DailyWithdrawalInvoiceEntity
 import com.example.data.local.PaymentEntity
 import com.example.data.local.ProductEntity
 import com.example.data.local.PurchaseInvoiceEntity
+import com.example.data.local.QuickSaleEntity
 import com.example.data.local.SalesInvoiceEntity
 import com.example.data.local.SupplierEntity
 import com.example.data.local.TenantEntity
@@ -204,6 +205,10 @@ class HesabatyViewModel(private val container: AppContainer) : ViewModel() {
 
     val dailyInvoices: StateFlow<List<DailyWithdrawalInvoiceEntity>> = _activeTenantId.flatMapLatest { tid ->
         if (tid == null) flowOf(emptyList()) else accRepo.observeDailyInvoices(tid)
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val quickSales: StateFlow<List<QuickSaleEntity>> = _activeTenantId.flatMapLatest { tid ->
+        if (tid == null) flowOf(emptyList()) else accRepo.observeQuickSales(tid)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     val products: StateFlow<List<ProductEntity>> = _activeTenantId.flatMapLatest { tid ->
@@ -1268,6 +1273,56 @@ class HesabatyViewModel(private val container: AppContainer) : ViewModel() {
                 is RepoResult.Success -> {
                     emitMessage("تم تسجيل الدفعة على الفاتورة اليومية")
                     onDone(true, res.data.id)
+                }
+            }
+        }
+    }
+
+    fun addQuickSale(
+        amountPiasters: Long,
+        description: String,
+        paymentMethod: String,
+        idempotencyKey: String,
+        onDone: (Boolean, String) -> Unit
+    ) {
+        val (tid, actor) = requireShopActor() ?: return
+        viewModelScope.launch {
+            when (
+                val res = accRepo.addQuickSale(
+                    tenantId = tid,
+                    actor = actor,
+                    amountPiasters = amountPiasters,
+                    description = description,
+                    paymentMethod = paymentMethod,
+                    idempotencyKey = idempotencyKey
+                )
+            ) {
+                is RepoResult.Error -> {
+                    emitMessage(res.message, true)
+                    onDone(false, res.message)
+                }
+                is RepoResult.Success -> {
+                    emitMessage("تمت إضافة السحبة إلى قسم المبيعات")
+                    onDone(true, res.data.id)
+                }
+            }
+        }
+    }
+
+    fun deleteQuickSale(
+        quickSaleId: String,
+        onDone: (Boolean, String) -> Unit = { _, _ -> }
+    ) {
+        val (tid, actor) = requireShopActor() ?: return
+        viewModelScope.launch {
+            when (val res = accRepo.deleteQuickSale(tid, actor, quickSaleId)) {
+                is RepoResult.Error -> {
+                    emitMessage(res.message, true)
+                    onDone(false, res.message)
+                }
+                is RepoResult.Success -> {
+                    emitMessage("تم حذف السحبة من قسم المبيعات")
+                    onDone(true, "")
                 }
             }
         }

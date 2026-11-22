@@ -24,6 +24,7 @@ import com.example.data.local.ProductEntity
 import com.example.data.local.PurchaseInvoiceEntity
 import com.example.data.local.PurchaseInvoiceItemEntity
 import com.example.data.local.PurchaseTypes
+import com.example.data.local.QuickSaleEntity
 import com.example.data.local.SaleTypes
 import com.example.data.local.SalesInvoiceEntity
 import com.example.data.local.SalesInvoiceItemEntity
@@ -114,7 +115,8 @@ enum class ReportType(val titleAr: String) {
     SUPPLIER_ACCOUNTS("تقرير حسابات الموردين"),
     DAILY_WITHDRAWALS("تقرير السحوبات اليومية"),
     INVOICES_OPEN_CLOSED("تقرير الفواتير المفتوحة والمغلقة"),
-    PURCHASES("تقرير المشتريات وفواتير الشراء")
+    PURCHASES("تقرير المشتريات وفواتير الشراء"),
+    QUICK_SALES("تقرير قسم المبيعات (بدون عميل)")
 }
 
 data class ReportOutput(
@@ -137,6 +139,7 @@ class AccountingRepository(private val db: HesabatyDatabase) {
     private val systemDao = db.systemDao()
     private val productDao = db.productDao()
     private val purchaseInvoiceDao = db.purchaseInvoiceDao()
+    private val quickSaleDao = db.quickSaleDao()
 
     // =========================================================================
     // Reactive Flows (Strictly Tenant-Isolated)
@@ -167,6 +170,7 @@ class AccountingRepository(private val db: HesabatyDatabase) {
     fun observeDailyItems(tenantId: String, dailyInvoiceId: String) = dailyDao.observeDailyItems(tenantId, dailyInvoiceId)
 
     fun observePayments(tenantId: String) = paymentDao.observePayments(tenantId)
+    fun observeQuickSales(tenantId: String): Flow<List<QuickSaleEntity>> = quickSaleDao.observeQuickSales(tenantId)
     fun observeProducts(tenantId: String): Flow<List<ProductEntity>> = productDao.observeProducts(tenantId)
     fun observeBackupHistory(tenantId: String) = systemDao.observeBackupHistory(tenantId)
     fun observeAppSettings(tenantId: String) = systemDao.observeAppSettings(tenantId)
@@ -234,8 +238,29 @@ class AccountingRepository(private val db: HesabatyDatabase) {
             )
         }
 
-        return combine(coreFlow, dailyDao.observeAllDailyInvoices(tenantId)) { summary, dailyInvoices ->
+        return combine(
+            coreFlow,
+            dailyDao.observeAllDailyInvoices(tenantId),
+            quickSaleDao.observeQuickSales(tenantId)
+        ) { summary, dailyInvoices, quickSales ->
+            val now = EgyptTime.nowMillis()
+            val dayStart = EgyptTime.startOfDayMillis(now)
+            val dayEnd = EgyptTime.endOfDayMillis(now)
+
+            val allQuickTotal = quickSales.sumOf { it.amountPiasters }
+            val todayQuick = quickSales.filter { it.createdAt in dayStart..dayEnd }
+            val todayQuickTotal = todayQuick.sumOf { it.amountPiasters }
+            val todayQuickCash = todayQuick.filter { it.paymentMethod == PaymentMethods.CASH }.sumOf { it.amountPiasters }
+            val todayQuickEWallet = todayQuick.filter { it.paymentMethod == PaymentMethods.EWALLET }.sumOf { it.amountPiasters }
+
             summary.copy(
+                totalIncomingPiasters = summary.totalIncomingPiasters + allQuickTotal,
+                totalNetBalancePiasters = summary.totalNetBalancePiasters + allQuickTotal,
+                todayIncomingPiasters = summary.todayIncomingPiasters + todayQuickTotal,
+                todaySalesPiasters = summary.todaySalesPiasters + todayQuickTotal,
+                todayCashCollectionsPiasters = summary.todayCashCollectionsPiasters + todayQuickCash,
+                todayEWalletCollectionsPiasters = summary.todayEWalletCollectionsPiasters + todayQuickEWallet,
+                todayNetCashflowPiasters = summary.todayNetCashflowPiasters + todayQuickTotal,
                 openDailyInvoicesCount = dailyInvoices.count { it.status == DailyInvoiceStatuses.OPEN }
             )
         }
@@ -1884,6 +1909,32 @@ class AccountingRepository(private val db: HesabatyDatabase) {
                     }
                 )
             }
+
+            ReportType.QUICK_SALES -> {
+                val filtered = quickSaleDao.getQuickSales(tenantId).filter { qs ->
+                    qs.createdAt in start..end &&
+                        (q.isEmpty() || qs.description.lowercase().contains(q) || MoneyFormatter.formatEgp(qs.amountPiasters, "").contains(q))
+                }
+                ReportOutput(
+                    type = type,
+                    periodLabel = periodLabel,
+                    summaryPairs = listOf(
+                        "عدد السحوبات" to "${filtered.size}",
+                        "إجمالي المبيعات السريعة" to MoneyFormatter.formatEgp(filtered.sumOf { it.amountPiasters }),
+                        "نقدي" to MoneyFormatter.formatEgp(filtered.filter { it.paymentMethod == PaymentMethods.CASH }.sumOf { it.amountPiasters }),
+                        "محفظة إلكترونية" to MoneyFormatter.formatEgp(filtered.filter { it.paymentMethod == PaymentMethods.EWALLET }.sumOf { it.amountPiasters })
+                    ),
+                    columns = listOf("التاريخ والوقت", "البيان", "الطريقة", "المبلغ"),
+                    rows = filtered.map { qs ->
+                        listOf(
+                            EgyptTime.formatDateTime(qs.createdAt),
+                            qs.description.ifBlank { "بدون بيان" },
+                            PaymentMethods.arabicLabel(qs.paymentMethod),
+                            MoneyFormatter.formatEgp(qs.amountPiasters, "")
+                        )
+                    }
+                )
+            }
         }
     }
 
@@ -2042,6 +2093,77 @@ class AccountingRepository(private val db: HesabatyDatabase) {
                 entityType = "PRODUCT",
                 entityId = productId,
                 details = "حذف صنف: ${existing.name}"
+            )
+            RepoResult.Success(Unit)
+        }
+    }
+
+    // =========================================================================
+    // Quick Sales (مبيعات وسحوبات سريعة بدون عميل - بالسعر فقط)
+    // =========================================================================
+
+    suspend fun addQuickSale(
+        tenantId: String,
+        actor: UserEntity,
+        amountPiasters: Long,
+        description: String = "",
+        paymentMethod: String = PaymentMethods.CASH,
+        occurredAtMillis: Long = EgyptTime.nowMillis(),
+        idempotencyKey: String = UUID.randomUUID().toString()
+    ): RepoResult<QuickSaleEntity> {
+        if (amountPiasters <= 0L) {
+            return RepoResult.Error("يرجى إدخال السعر / المبلغ أكبر من صفر")
+        }
+        val cleanDesc = description.trim()
+        val safeMethod = when (paymentMethod) {
+            PaymentMethods.CASH, PaymentMethods.EWALLET, PaymentMethods.BANK_TRANSFER -> paymentMethod
+            else -> PaymentMethods.CASH
+        }
+
+        return db.withTransaction {
+            val dup = quickSaleDao.getByIdempotencyKey(tenantId, idempotencyKey)
+            if (dup != null) return@withTransaction RepoResult.Success(dup)
+
+            val sale = QuickSaleEntity(
+                id = UUID.randomUUID().toString(),
+                tenantId = tenantId,
+                amountPiasters = amountPiasters,
+                description = cleanDesc,
+                paymentMethod = safeMethod,
+                idempotencyKey = idempotencyKey,
+                createdByUserId = actor.id,
+                createdAt = occurredAtMillis
+            )
+            quickSaleDao.upsertQuickSale(sale)
+            val descLabel = cleanDesc.ifBlank { "بدون بيان" }
+            recordAudit(
+                tenantId = tenantId,
+                actor = actor,
+                action = "ADD_QUICK_SALE",
+                entityType = "QUICK_SALE",
+                entityId = sale.id,
+                details = "سحبة مبيعات سريعة بقيمة ${MoneyFormatter.formatEgp(amountPiasters)} ($descLabel)"
+            )
+            RepoResult.Success(sale)
+        }
+    }
+
+    suspend fun deleteQuickSale(
+        tenantId: String,
+        actor: UserEntity,
+        quickSaleId: String
+    ): RepoResult<Unit> {
+        return db.withTransaction {
+            val existing = quickSaleDao.getQuickSaleById(tenantId, quickSaleId)
+                ?: return@withTransaction RepoResult.Error("السجل غير موجود")
+            quickSaleDao.deleteQuickSale(tenantId, quickSaleId)
+            recordAudit(
+                tenantId = tenantId,
+                actor = actor,
+                action = "DELETE_QUICK_SALE",
+                entityType = "QUICK_SALE",
+                entityId = quickSaleId,
+                details = "حذف سحبة مبيعات بقيمة ${MoneyFormatter.formatEgp(existing.amountPiasters)}"
             )
             RepoResult.Success(Unit)
         }

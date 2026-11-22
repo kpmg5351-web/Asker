@@ -27,9 +27,10 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         DeviceTrialRegistryEntity::class,
         ProductEntity::class,
         PurchaseInvoiceEntity::class,
-        PurchaseInvoiceItemEntity::class
+        PurchaseInvoiceItemEntity::class,
+        QuickSaleEntity::class
     ],
-    version = 5,
+    version = 6,
     exportSchema = false
 )
 abstract class HesabatyDatabase : RoomDatabase() {
@@ -46,6 +47,7 @@ abstract class HesabatyDatabase : RoomDatabase() {
     abstract fun deviceTrialDao(): DeviceTrialDao
     abstract fun productDao(): ProductDao
     abstract fun purchaseInvoiceDao(): PurchaseInvoiceDao
+    abstract fun quickSaleDao(): QuickSaleDao
 
     companion object {
         private const val DB_NAME = "hesabaty_accounting_v1.db"
@@ -183,6 +185,32 @@ abstract class HesabatyDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * Non-destructive migration adding Quick Sales (customer-free price-only withdrawals).
+         */
+        val MIGRATION_5_6 = object : Migration(5, 6) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `quick_sales` (
+                        `id` TEXT NOT NULL,
+                        `tenantId` TEXT NOT NULL,
+                        `amountPiasters` INTEGER NOT NULL,
+                        `description` TEXT NOT NULL DEFAULT '',
+                        `paymentMethod` TEXT NOT NULL DEFAULT 'CASH',
+                        `idempotencyKey` TEXT NOT NULL,
+                        `createdByUserId` TEXT NOT NULL,
+                        `createdAt` INTEGER NOT NULL,
+                        PRIMARY KEY(`id`)
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_quick_sales_tenantId` ON `quick_sales` (`tenantId`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_quick_sales_tenantId_createdAt` ON `quick_sales` (`tenantId`, `createdAt`)")
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_quick_sales_tenantId_idempotencyKey` ON `quick_sales` (`tenantId`, `idempotencyKey`)")
+            }
+        }
+
         @Volatile
         private var INSTANCE: HesabatyDatabase? = null
 
@@ -193,7 +221,7 @@ abstract class HesabatyDatabase : RoomDatabase() {
                     HesabatyDatabase::class.java,
                     DB_NAME
                 )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
                     .setJournalMode(JournalMode.WRITE_AHEAD_LOGGING)
                     .build()
                     .also { INSTANCE = it }

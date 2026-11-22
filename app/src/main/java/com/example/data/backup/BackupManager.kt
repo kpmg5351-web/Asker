@@ -138,7 +138,8 @@ class BackupManager(
                 auditLogs = db.systemDao().getTenantAuditLogs(tenantId),
                 products = db.productDao().getProducts(tenantId),
                 purchaseInvoices = db.purchaseInvoiceDao().getPurchaseInvoices(tenantId),
-                purchaseInvoiceItems = db.purchaseInvoiceDao().getAllPurchaseInvoiceItems(tenantId)
+                purchaseInvoiceItems = db.purchaseInvoiceDao().getAllPurchaseInvoiceItems(tenantId),
+                quickSales = db.quickSaleDao().getQuickSales(tenantId)
             )
         }
 
@@ -365,6 +366,9 @@ class BackupManager(
                 }
                 if (payload.purchaseInvoiceItems.isNotEmpty()) {
                     db.purchaseInvoiceDao().upsertPurchaseInvoiceItems(payload.purchaseInvoiceItems)
+                }
+                if (payload.quickSales.isNotEmpty()) {
+                    db.quickSaleDao().upsertQuickSales(payload.quickSales)
                 }
                 payload.appSettings?.let { db.systemDao().upsertAppSettings(it) }
                 db.systemDao().upsertAuditLogs(payload.auditLogs)

@@ -51,6 +51,7 @@ import androidx.compose.material.icons.filled.LocalShipping
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Payments
 import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.PointOfSale
 import androidx.compose.material.icons.filled.Receipt
 import androidx.compose.material.icons.filled.Savings
 import androidx.compose.material.icons.filled.Search
@@ -511,12 +512,74 @@ fun DashboardScreen(
             }
         }
 
-        // 6. Signature 3-Column Elevated Rounded-Square Operations Grid
+        // 6. Featured Quick Sales Section + Signature 3-Column Elevated Rounded-Square Operations Grid
         item {
             Column(
                 modifier = Modifier.padding(horizontal = hPad),
                 verticalArrangement = Arrangement.spacedBy(gridGap)
             ) {
+                HesabatyCard(
+                    onClick = { onNavigate("quick_sales") },
+                    containerColor = extras.successContainer,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 56.dp)
+                        .testTag("action_quick_sales")
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(if (uiScale.isCompact) 38.dp else 44.dp)
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(extras.success.copy(alpha = 0.16f)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.PointOfSale,
+                                    contentDescription = "قسم المبيعات",
+                                    tint = extras.success,
+                                    modifier = Modifier.size(if (uiScale.isCompact) 21.dp else 24.dp)
+                                )
+                            }
+                            Column {
+                                Text(
+                                    text = "قسم المبيعات (بدون عميل)",
+                                    style = if (uiScale.isCompact) MaterialTheme.typography.titleSmall else MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                                Text(
+                                    text = "سحوبات سريعة بالسعر فقط والبيان اختياري",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        }
+                        Surface(
+                            shape = RoundedCornerShape(50),
+                            color = extras.success
+                        ) {
+                            Text(
+                                text = "فتح",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = Color.White,
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                            )
+                        }
+                    }
+                }
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(gridGap)

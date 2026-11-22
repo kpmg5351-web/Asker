@@ -1028,4 +1028,99 @@ class HesabatyAccountingRobolectricTest {
         assertEquals(50_000L, summary.totalCustomerReceivablesPiasters)
         assertEquals(5_000L, summary.totalSupplierPayablesPiasters)
     }
+
+    @Test
+    fun test27_quickSalesWithoutCustomerUpdatesTotalsReportsAndBackupRestore() = runTest {
+        // Invalid amount (<= 0) must be rejected
+        val invalidRes = accRepo.addQuickSale(
+            tenantId = tenantAId,
+            actor = ownerA,
+            amountPiasters = 0L,
+            description = ""
+        )
+        assertTrue(invalidRes is RepoResult.Error)
+
+        val now = EgyptTime.nowMillis()
+        val twoDaysAgo = now - 2L * 24 * 60 * 60 * 1000L
+
+        // 1) Older cash quick sale with blank description (optional description allowed)
+        val idemKey1 = "qs-idem-1"
+        val olderRes = accRepo.addQuickSale(
+            tenantId = tenantAId,
+            actor = ownerA,
+            amountPiasters = 25_000L, // 250 EGP
+            description = "",
+            paymentMethod = PaymentMethods.CASH,
+            occurredAtMillis = twoDaysAgo,
+            idempotencyKey = idemKey1
+        )
+        assertTrue(olderRes is RepoResult.Success)
+        val olderSale = (olderRes as RepoResult.Success).data
+        assertEquals("", olderSale.description)
+
+        // Duplicate tap with same idempotencyKey must not insert duplicate row
+        val dupRes = accRepo.addQuickSale(
+            tenantId = tenantAId,
+            actor = ownerA,
+            amountPiasters = 25_000L,
+            description = "",
+            paymentMethod = PaymentMethods.CASH,
+            occurredAtMillis = twoDaysAgo,
+            idempotencyKey = idemKey1
+        )
+        assertTrue(dupRes is RepoResult.Success)
+        assertEquals(olderSale.id, (dupRes as RepoResult.Success).data.id)
+
+        // 2) Today's quick sale with optional description and e-wallet
+        val todayRes = accRepo.addQuickSale(
+            tenantId = tenantAId,
+            actor = ownerA,
+            amountPiasters = 15_000L, // 150 EGP
+            description = "سحبة قطعة غيار",
+            paymentMethod = PaymentMethods.EWALLET,
+            occurredAtMillis = now
+        )
+        assertTrue(todayRes is RepoResult.Success)
+        val todaySale = (todayRes as RepoResult.Success).data
+
+        val allQuickSales = accRepo.observeQuickSales(tenantAId).first()
+        assertEquals(2, allQuickSales.size)
+
+        // Dashboard summary must include quick sales in incoming, net balance, and today totals
+        val summary = accRepo.observeDashboardSummary(tenantAId).first()
+        assertEquals(40_000L, summary.totalIncomingPiasters)
+        assertEquals(0L, summary.totalOutgoingPiasters)
+        assertEquals(40_000L, summary.totalNetBalancePiasters)
+        assertEquals(15_000L, summary.todayIncomingPiasters)
+        assertEquals(15_000L, summary.todaySalesPiasters)
+        assertEquals(15_000L, summary.todayEWalletCollectionsPiasters)
+        assertEquals(15_000L, summary.todayNetCashflowPiasters)
+
+        // Dedicated Quick Sales Report must list both entries (and handle blank description)
+        val report = accRepo.generateReport(
+            tenantId = tenantAId,
+            type = ReportType.QUICK_SALES,
+            fromMillis = twoDaysAgo - 86_400_000L,
+            toMillis = now + 86_400_000L,
+            query = ""
+        )
+        assertEquals(2, report.rows.size)
+        assertTrue(report.rows.any { it.contains("سحبة قطعة غيار") })
+        assertTrue(report.rows.any { it.contains("بدون بيان") })
+
+        // Encrypted backup & restore must preserve quick sales
+        val (_, bytes) = backupManager.buildEncryptedBackupBytes(tenantAId, "passQuick123")
+        val delRes = accRepo.deleteQuickSale(tenantAId, ownerA, olderSale.id)
+        assertTrue(delRes is RepoResult.Success)
+        assertEquals(1, accRepo.observeQuickSales(tenantAId).first().size)
+
+        val summaryAfterDelete = accRepo.observeDashboardSummary(tenantAId).first()
+        assertEquals(15_000L, summaryAfterDelete.totalIncomingPiasters)
+
+        val restoreRes = backupManager.restoreFromEncryptedBytes(bytes, tenantAId, ownerA.id, ownerA.username, "passQuick123")
+        assertTrue(restoreRes is BackupOpResult.Success)
+        assertEquals(2, accRepo.observeQuickSales(tenantAId).first().size)
+        assertEquals(40_000L, accRepo.observeDashboardSummary(tenantAId).first().totalIncomingPiasters)
+        assertEquals(todaySale.amountPiasters, db.quickSaleDao().getQuickSaleById(tenantAId, todaySale.id)?.amountPiasters)
+    }
 }

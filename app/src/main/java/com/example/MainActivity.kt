@@ -97,6 +97,7 @@ import com.example.ui.screens.NewSaleScreen
 import com.example.ui.screens.ProductsScreen
 import com.example.ui.screens.PurchaseInvoicePreviewScreen
 import com.example.ui.screens.PurchasesScreen
+import com.example.ui.screens.QuickSalesScreen
 import com.example.ui.screens.ReportsScreen
 import com.example.ui.screens.SettingsScreen
 import com.example.ui.screens.SupplierDetailScreen
@@ -633,6 +634,13 @@ private fun ShopWorkspaceHost(
 
                     composable("products") {
                         ProductsScreen(
+                            viewModel = viewModel,
+                            onBack = { navController.popBackStack() }
+                        )
+                    }
+
+                    composable("quick_sales") {
+                        QuickSalesScreen(
                             viewModel = viewModel,
                             onBack = { navController.popBackStack() }
                         )

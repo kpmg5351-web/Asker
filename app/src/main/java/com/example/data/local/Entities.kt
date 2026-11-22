@@ -598,3 +598,24 @@ data class PurchaseInvoiceItemEntity(
     val lineTotalPiasters: Long,
     val sortOrder: Int = 0
 )
+
+// 20. QuickSales (مبيعات وسحوبات سريعة بدون عميل - بالسعر فقط وبيان اختياري)
+@JsonClass(generateAdapter = true)
+@Entity(
+    tableName = "quick_sales",
+    indices = [
+        Index(value = ["tenantId"]),
+        Index(value = ["tenantId", "createdAt"]),
+        Index(value = ["tenantId", "idempotencyKey"], unique = true)
+    ]
+)
+data class QuickSaleEntity(
+    @PrimaryKey val id: String,
+    val tenantId: String,
+    val amountPiasters: Long,
+    val description: String = "",
+    val paymentMethod: String = PaymentMethods.CASH,
+    val idempotencyKey: String,
+    val createdByUserId: String,
+    val createdAt: Long
+)

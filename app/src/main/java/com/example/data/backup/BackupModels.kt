@@ -11,6 +11,7 @@ import com.example.data.local.PaymentEntity
 import com.example.data.local.ProductEntity
 import com.example.data.local.PurchaseInvoiceEntity
 import com.example.data.local.PurchaseInvoiceItemEntity
+import com.example.data.local.QuickSaleEntity
 import com.example.data.local.SalesInvoiceEntity
 import com.example.data.local.SalesInvoiceItemEntity
 import com.example.data.local.SupplierEntity
@@ -39,7 +40,8 @@ data class TenantBackupPayload(
     val auditLogs: List<AuditLogEntity>,
     val products: List<ProductEntity> = emptyList(),
     val purchaseInvoices: List<PurchaseInvoiceEntity> = emptyList(),
-    val purchaseInvoiceItems: List<PurchaseInvoiceItemEntity> = emptyList()
+    val purchaseInvoiceItems: List<PurchaseInvoiceItemEntity> = emptyList(),
+    val quickSales: List<QuickSaleEntity> = emptyList()
 )
 
 @JsonClass(generateAdapter = true)
