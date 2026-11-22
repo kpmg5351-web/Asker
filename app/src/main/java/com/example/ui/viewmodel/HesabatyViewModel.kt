@@ -1283,6 +1283,8 @@ class HesabatyViewModel(private val container: AppContainer) : ViewModel() {
         description: String,
         paymentMethod: String,
         idempotencyKey: String,
+        quantityMilli: Long = 1_000L,
+        unitLabel: String = "",
         onDone: (Boolean, String) -> Unit
     ) {
         val (tid, actor) = requireShopActor() ?: return
@@ -1294,6 +1296,8 @@ class HesabatyViewModel(private val container: AppContainer) : ViewModel() {
                     amountPiasters = amountPiasters,
                     description = description,
                     paymentMethod = paymentMethod,
+                    quantityMilli = quantityMilli,
+                    unitLabel = unitLabel,
                     idempotencyKey = idempotencyKey
                 )
             ) {

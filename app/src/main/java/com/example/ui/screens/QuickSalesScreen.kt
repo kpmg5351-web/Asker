@@ -1,5 +1,6 @@
 package com.example.ui.screens
 
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -16,6 +17,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
@@ -23,6 +25,8 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.PointOfSale
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AlertDialog
@@ -34,6 +38,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -65,6 +70,8 @@ import com.example.ui.theme.HesabatyThemeExtras
 import com.example.ui.viewmodel.HesabatyViewModel
 import java.util.UUID
 
+private val quickUnitSuggestions = listOf("قطعة", "كرتونة", "كيلو", "متر", "لتر", "علبة")
+
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun QuickSalesScreen(
@@ -80,6 +87,9 @@ fun QuickSalesScreen(
 
     var amountInput by rememberSaveable { mutableStateOf("") }
     var descriptionInput by rememberSaveable { mutableStateOf("") }
+    var showQuantityUnitOptions by rememberSaveable { mutableStateOf(false) }
+    var quantityInput by rememberSaveable { mutableStateOf("") }
+    var unitInput by rememberSaveable { mutableStateOf("") }
     var paymentMethod by rememberSaveable { mutableStateOf(PaymentMethods.CASH) }
     var draftIdempotencyKey by rememberSaveable { mutableStateOf(UUID.randomUUID().toString()) }
     var isSaving by remember { mutableStateOf(false) }
@@ -101,6 +111,19 @@ fun QuickSalesScreen(
         quickSales.sumOf { it.amountPiasters }
     }
 
+    val parsedPricePiasters = remember(amountInput) { MoneyFormatter.parseEgpToPiasters(amountInput) }
+    val parsedQuantityMilli = remember(quantityInput) {
+        if (quantityInput.isBlank()) 1_000L else MoneyFormatter.parseQuantityToMilli(quantityInput)
+    }
+    val liveComputedTotalPiasters = remember(parsedPricePiasters, parsedQuantityMilli) {
+        if (parsedPricePiasters != null && parsedPricePiasters > 0L && parsedQuantityMilli != null && parsedQuantityMilli > 0L) {
+            if (parsedQuantityMilli == 1_000L) parsedPricePiasters
+            else MoneyFormatter.calculateLineTotalPiasters(parsedPricePiasters, parsedQuantityMilli)
+        } else {
+            null
+        }
+    }
+
     val filteredItems = remember(quickSales, showTodayOnly, searchQuery, todayKey) {
         val base = if (showTodayOnly) {
             quickSales.filter { EgyptTime.todayEpochDay(it.createdAt) == todayKey }
@@ -113,6 +136,7 @@ fun QuickSalesScreen(
         } else {
             base.filter { item ->
                 item.description.contains(q, ignoreCase = true) ||
+                    item.unitLabel.contains(q, ignoreCase = true) ||
                     MoneyFormatter.formatEgpPlainInput(item.amountPiasters).contains(q)
             }
         }
@@ -120,24 +144,41 @@ fun QuickSalesScreen(
 
     fun submitQuickSale() {
         if (isSaving) return
-        val piasters = MoneyFormatter.parseEgpToPiasters(amountInput)
-        if (piasters == null || piasters <= 0L) {
+        val unitPrice = MoneyFormatter.parseEgpToPiasters(amountInput)
+        if (unitPrice == null || unitPrice <= 0L) {
             errorMessage = "يرجى إدخال السعر / المبلغ بشكل صحيح أكبر من صفر"
             return
         }
+        val qtyMilli = if (quantityInput.isBlank()) {
+            1_000L
+        } else {
+            MoneyFormatter.parseQuantityToMilli(quantityInput) ?: run {
+                errorMessage = "يرجى إدخال العدد / الكمية بشكل صحيح أكبر من صفر أو تركه فارغاً"
+                return
+            }
+        }
+        if (qtyMilli <= 0L) {
+            errorMessage = "يرجى إدخال العدد / الكمية أكبر من صفر أو تركه فارغاً"
+            return
+        }
+
         errorMessage = null
         isSaving = true
         focusManager.clearFocus()
         viewModel.addQuickSale(
-            amountPiasters = piasters,
+            amountPiasters = unitPrice,
             description = descriptionInput.trim(),
             paymentMethod = paymentMethod,
+            quantityMilli = qtyMilli,
+            unitLabel = unitInput.trim(),
             idempotencyKey = draftIdempotencyKey
         ) { success, msg ->
             isSaving = false
             if (success) {
                 amountInput = ""
                 descriptionInput = ""
+                quantityInput = ""
+                unitInput = ""
                 draftIdempotencyKey = UUID.randomUUID().toString()
             } else {
                 errorMessage = msg
@@ -148,8 +189,8 @@ fun QuickSalesScreen(
     Scaffold(
         topBar = {
             HesabatyTopBar(
-                title = "قسم المبيعات",
-                subtitle = "سحوبات سريعة بالسعر فقط بدون عميل",
+                title = "بيع بدون عميل",
+                subtitle = "سحوبات سريعة بالسعر فقط — البيان والعدد والوحدة اختيارية",
                 onBack = onBack
             )
         }
@@ -202,7 +243,12 @@ fun QuickSalesScreen(
                             amountInput = it
                             if (errorMessage != null) errorMessage = null
                         },
-                        label = { Text("السعر / المبلغ * ($currency)") },
+                        label = {
+                            Text(
+                                if (quantityInput.isNotBlank()) "سعر الوحدة * ($currency)"
+                                else "السعر / المبلغ * ($currency)"
+                            )
+                        },
                         placeholder = { Text("مثال: 150") },
                         singleLine = true,
                         isError = errorMessage != null,
@@ -238,6 +284,111 @@ fun QuickSalesScreen(
                             .fillMaxWidth()
                             .testTag("quick_sale_note_input")
                     )
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    // Optional Quantity & Unit Expander
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        FilterChip(
+                            selected = showQuantityUnitOptions || quantityInput.isNotBlank() || unitInput.isNotBlank(),
+                            onClick = { showQuantityUnitOptions = !showQuantityUnitOptions },
+                            label = { Text("إضافة العدد / الوحدة (اختياري)") },
+                            leadingIcon = {
+                                Icon(
+                                    imageVector = if (showQuantityUnitOptions) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            },
+                            modifier = Modifier.testTag("quick_sale_toggle_qty_unit")
+                        )
+                    }
+
+                    AnimatedVisibility(
+                        visible = showQuantityUnitOptions || quantityInput.isNotBlank() || unitInput.isNotBlank()
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = 8.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                OutlinedTextField(
+                                    value = quantityInput,
+                                    onValueChange = {
+                                        quantityInput = it
+                                        if (errorMessage != null) errorMessage = null
+                                    },
+                                    label = { Text("العدد (اختياري)") },
+                                    placeholder = { Text("1") },
+                                    singleLine = true,
+                                    keyboardOptions = KeyboardOptions(
+                                        keyboardType = KeyboardType.Decimal,
+                                        imeAction = ImeAction.Next
+                                    ),
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .testTag("quick_sale_quantity_input")
+                                )
+                                OutlinedTextField(
+                                    value = unitInput,
+                                    onValueChange = { unitInput = it },
+                                    label = { Text("الوحدة (اختياري)") },
+                                    placeholder = { Text("قطعة / كرتونة") },
+                                    singleLine = true,
+                                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                                    keyboardActions = KeyboardActions(onDone = { submitQuickSale() }),
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .testTag("quick_sale_unit_input")
+                                )
+                            }
+
+                            FlowRow(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                verticalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                quickUnitSuggestions.forEach { suggestedUnit ->
+                                    val selected = unitInput.trim() == suggestedUnit
+                                    FilterChip(
+                                        selected = selected,
+                                        onClick = {
+                                            unitInput = if (selected) "" else suggestedUnit
+                                        },
+                                        label = { Text(suggestedUnit, style = MaterialTheme.typography.labelSmall) }
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    if (liveComputedTotalPiasters != null && (quantityInput.isNotBlank() || unitInput.isNotBlank())) {
+                        val qtyDisplay = MoneyFormatter.formatQuantity(parsedQuantityMilli ?: 1_000L)
+                        val unitDisplay = unitInput.trim().let { if (it.isNotEmpty()) " $it" else "" }
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Surface(
+                            shape = RoundedCornerShape(10.dp),
+                            color = extras.successContainer,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(
+                                text = "الإجمالي: ${MoneyFormatter.formatEgp(parsedPricePiasters ?: 0L, currency)} × $qtyDisplay$unitDisplay = ${MoneyFormatter.formatEgp(liveComputedTotalPiasters, currency)}",
+                                style = MaterialTheme.typography.labelLarge,
+                                fontWeight = FontWeight.Bold,
+                                color = extras.success,
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
+                            )
+                        }
+                    }
 
                     Spacer(modifier = Modifier.height(10.dp))
 
@@ -346,7 +497,7 @@ fun QuickSalesScreen(
                         OutlinedTextField(
                             value = searchQuery,
                             onValueChange = { searchQuery = it },
-                            placeholder = { Text("بحث بالبيان أو السعر...") },
+                            placeholder = { Text("بحث بالبيان أو الوحدة أو السعر...") },
                             singleLine = true,
                             leadingIcon = {
                                 Icon(Icons.Default.Search, contentDescription = "بحث")
@@ -427,6 +578,7 @@ private fun QuickSaleRowCard(
     onDeleteClick: () -> Unit
 ) {
     val extras = HesabatyThemeExtras.colors
+    val hasQtyOrUnit = item.quantityMilli != 1_000L || item.unitLabel.isNotBlank()
     HesabatyCard(modifier = Modifier.fillMaxWidth()) {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -448,6 +600,17 @@ private fun QuickSaleRowCard(
                         label = PaymentMethods.arabicLabel(item.paymentMethod),
                         textColor = MaterialTheme.colorScheme.primary,
                         backgroundColor = MaterialTheme.colorScheme.primaryContainer
+                    )
+                }
+                if (hasQtyOrUnit) {
+                    Spacer(modifier = Modifier.height(4.dp))
+                    val unitText = if (item.unitLabel.isNotBlank()) " ${item.unitLabel}" else ""
+                    val perUnit = item.unitPricePiasters.takeIf { it > 0L } ?: item.amountPiasters
+                    Text(
+                        text = "العدد: ${MoneyFormatter.formatQuantity(item.quantityMilli)}$unitText • سعر الوحدة: ${MoneyFormatter.formatEgp(perUnit, currency)}",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                        fontWeight = FontWeight.SemiBold
                     )
                 }
                 Spacer(modifier = Modifier.height(4.dp))

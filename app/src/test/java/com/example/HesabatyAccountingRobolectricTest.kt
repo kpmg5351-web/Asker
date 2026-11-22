@@ -1071,17 +1071,23 @@ class HesabatyAccountingRobolectricTest {
         assertTrue(dupRes is RepoResult.Success)
         assertEquals(olderSale.id, (dupRes as RepoResult.Success).data.id)
 
-        // 2) Today's quick sale with optional description and e-wallet
+        // 2) Today's quick sale with optional description, quantity (3), unit ("كرتونة"), and e-wallet (50 EGP * 3 = 150 EGP)
         val todayRes = accRepo.addQuickSale(
             tenantId = tenantAId,
             actor = ownerA,
-            amountPiasters = 15_000L, // 150 EGP
+            amountPiasters = 5_000L, // 50 EGP per unit
             description = "سحبة قطعة غيار",
             paymentMethod = PaymentMethods.EWALLET,
+            quantityMilli = 3_000L,
+            unitLabel = "كرتونة",
             occurredAtMillis = now
         )
         assertTrue(todayRes is RepoResult.Success)
         val todaySale = (todayRes as RepoResult.Success).data
+        assertEquals(15_000L, todaySale.amountPiasters)
+        assertEquals(5_000L, todaySale.unitPricePiasters)
+        assertEquals(3_000L, todaySale.quantityMilli)
+        assertEquals("كرتونة", todaySale.unitLabel)
 
         val allQuickSales = accRepo.observeQuickSales(tenantAId).first()
         assertEquals(2, allQuickSales.size)
@@ -1096,7 +1102,7 @@ class HesabatyAccountingRobolectricTest {
         assertEquals(15_000L, summary.todayEWalletCollectionsPiasters)
         assertEquals(15_000L, summary.todayNetCashflowPiasters)
 
-        // Dedicated Quick Sales Report must list both entries (and handle blank description)
+        // Dedicated Quick Sales Report must list both entries (and handle blank description + optional quantity/unit)
         val report = accRepo.generateReport(
             tenantId = tenantAId,
             type = ReportType.QUICK_SALES,
@@ -1105,10 +1111,10 @@ class HesabatyAccountingRobolectricTest {
             query = ""
         )
         assertEquals(2, report.rows.size)
-        assertTrue(report.rows.any { it.contains("سحبة قطعة غيار") })
+        assertTrue(report.rows.any { it.contains("سحبة قطعة غيار") && it.contains("3 كرتونة") })
         assertTrue(report.rows.any { it.contains("بدون بيان") })
 
-        // Encrypted backup & restore must preserve quick sales
+        // Encrypted backup & restore must preserve quick sales including quantity and unit
         val (_, bytes) = backupManager.buildEncryptedBackupBytes(tenantAId, "passQuick123")
         val delRes = accRepo.deleteQuickSale(tenantAId, ownerA, olderSale.id)
         assertTrue(delRes is RepoResult.Success)
@@ -1121,6 +1127,9 @@ class HesabatyAccountingRobolectricTest {
         assertTrue(restoreRes is BackupOpResult.Success)
         assertEquals(2, accRepo.observeQuickSales(tenantAId).first().size)
         assertEquals(40_000L, accRepo.observeDashboardSummary(tenantAId).first().totalIncomingPiasters)
-        assertEquals(todaySale.amountPiasters, db.quickSaleDao().getQuickSaleById(tenantAId, todaySale.id)?.amountPiasters)
+        val restoredToday = db.quickSaleDao().getQuickSaleById(tenantAId, todaySale.id)
+        assertEquals(todaySale.amountPiasters, restoredToday?.amountPiasters)
+        assertEquals("كرتونة", restoredToday?.unitLabel)
+        assertEquals(3_000L, restoredToday?.quantityMilli)
     }
 }

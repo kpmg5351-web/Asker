@@ -613,6 +613,9 @@ data class QuickSaleEntity(
     @PrimaryKey val id: String,
     val tenantId: String,
     val amountPiasters: Long,
+    val unitPricePiasters: Long = 0L,
+    val quantityMilli: Long = 1_000L, // 1000 = 1.000
+    val unitLabel: String = "",
     val description: String = "",
     val paymentMethod: String = PaymentMethods.CASH,
     val idempotencyKey: String,

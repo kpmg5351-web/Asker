@@ -1924,11 +1924,18 @@ class AccountingRepository(private val db: HesabatyDatabase) {
                         "نقدي" to MoneyFormatter.formatEgp(filtered.filter { it.paymentMethod == PaymentMethods.CASH }.sumOf { it.amountPiasters }),
                         "محفظة إلكترونية" to MoneyFormatter.formatEgp(filtered.filter { it.paymentMethod == PaymentMethods.EWALLET }.sumOf { it.amountPiasters })
                     ),
-                    columns = listOf("التاريخ والوقت", "البيان", "الطريقة", "المبلغ"),
+                    columns = listOf("التاريخ والوقت", "البيان", "الكمية / الوحدة", "الطريقة", "المبلغ"),
                     rows = filtered.map { qs ->
+                        val qtyText = if (qs.quantityMilli != 1_000L || qs.unitLabel.isNotBlank()) {
+                            val qStr = MoneyFormatter.formatQuantity(qs.quantityMilli)
+                            if (qs.unitLabel.isNotBlank()) "$qStr ${qs.unitLabel}" else qStr
+                        } else {
+                            "—"
+                        }
                         listOf(
                             EgyptTime.formatDateTime(qs.createdAt),
                             qs.description.ifBlank { "بدون بيان" },
+                            qtyText,
                             PaymentMethods.arabicLabel(qs.paymentMethod),
                             MoneyFormatter.formatEgp(qs.amountPiasters, "")
                         )
@@ -2108,13 +2115,27 @@ class AccountingRepository(private val db: HesabatyDatabase) {
         amountPiasters: Long,
         description: String = "",
         paymentMethod: String = PaymentMethods.CASH,
+        quantityMilli: Long = 1_000L,
+        unitLabel: String = "",
         occurredAtMillis: Long = EgyptTime.nowMillis(),
         idempotencyKey: String = UUID.randomUUID().toString()
     ): RepoResult<QuickSaleEntity> {
         if (amountPiasters <= 0L) {
             return RepoResult.Error("يرجى إدخال السعر / المبلغ أكبر من صفر")
         }
+        if (quantityMilli <= 0L) {
+            return RepoResult.Error("يرجى إدخال العدد / الكمية أكبر من صفر")
+        }
         val cleanDesc = description.trim()
+        val cleanUnit = unitLabel.trim()
+        val computedTotalPiasters = if (quantityMilli == 1_000L) {
+            amountPiasters
+        } else {
+            MoneyFormatter.calculateLineTotalPiasters(amountPiasters, quantityMilli)
+        }
+        if (computedTotalPiasters <= 0L) {
+            return RepoResult.Error("إجمالي السحبة يجب أن يكون أكبر من صفر")
+        }
         val safeMethod = when (paymentMethod) {
             PaymentMethods.CASH, PaymentMethods.EWALLET, PaymentMethods.BANK_TRANSFER -> paymentMethod
             else -> PaymentMethods.CASH
@@ -2127,7 +2148,10 @@ class AccountingRepository(private val db: HesabatyDatabase) {
             val sale = QuickSaleEntity(
                 id = UUID.randomUUID().toString(),
                 tenantId = tenantId,
-                amountPiasters = amountPiasters,
+                amountPiasters = computedTotalPiasters,
+                unitPricePiasters = amountPiasters,
+                quantityMilli = quantityMilli,
+                unitLabel = cleanUnit,
                 description = cleanDesc,
                 paymentMethod = safeMethod,
                 idempotencyKey = idempotencyKey,
@@ -2136,13 +2160,16 @@ class AccountingRepository(private val db: HesabatyDatabase) {
             )
             quickSaleDao.upsertQuickSale(sale)
             val descLabel = cleanDesc.ifBlank { "بدون بيان" }
+            val qtyAudit = if (quantityMilli != 1_000L || cleanUnit.isNotBlank()) {
+                " — الكمية: ${MoneyFormatter.formatQuantity(quantityMilli)}${if (cleanUnit.isNotBlank()) " $cleanUnit" else ""}"
+            } else ""
             recordAudit(
                 tenantId = tenantId,
                 actor = actor,
                 action = "ADD_QUICK_SALE",
                 entityType = "QUICK_SALE",
                 entityId = sale.id,
-                details = "سحبة مبيعات سريعة بقيمة ${MoneyFormatter.formatEgp(amountPiasters)} ($descLabel)"
+                details = "سحبة مبيعات سريعة بقيمة ${MoneyFormatter.formatEgp(computedTotalPiasters)} ($descLabel)$qtyAudit"
             )
             RepoResult.Success(sale)
         }

@@ -30,7 +30,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         PurchaseInvoiceItemEntity::class,
         QuickSaleEntity::class
     ],
-    version = 6,
+    version = 7,
     exportSchema = false
 )
 abstract class HesabatyDatabase : RoomDatabase() {
@@ -211,6 +211,17 @@ abstract class HesabatyDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * Non-destructive migration adding optional unit price, quantity, and unit label to Quick Sales.
+         */
+        val MIGRATION_6_7 = object : Migration(6, 7) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE quick_sales ADD COLUMN unitPricePiasters INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE quick_sales ADD COLUMN quantityMilli INTEGER NOT NULL DEFAULT 1000")
+                db.execSQL("ALTER TABLE quick_sales ADD COLUMN unitLabel TEXT NOT NULL DEFAULT ''")
+            }
+        }
+
         @Volatile
         private var INSTANCE: HesabatyDatabase? = null
 
@@ -221,7 +232,14 @@ abstract class HesabatyDatabase : RoomDatabase() {
                     HesabatyDatabase::class.java,
                     DB_NAME
                 )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
+                    .addMigrations(
+                        MIGRATION_1_2,
+                        MIGRATION_2_3,
+                        MIGRATION_3_4,
+                        MIGRATION_4_5,
+                        MIGRATION_5_6,
+                        MIGRATION_6_7
+                    )
                     .setJournalMode(JournalMode.WRITE_AHEAD_LOGGING)
                     .build()
                     .also { INSTANCE = it }
