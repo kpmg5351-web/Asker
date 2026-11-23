@@ -66,6 +66,15 @@ data class InstallmentDraft(
     val amountPiasters: Long
 )
 
+data class CustomerSettlementSummary(
+    val customerId: String,
+    val closedOpenDailyCount: Int,
+    val settledPreviousBalancePiasters: Long,
+    val paidAmountPiasters: Long,
+    val discountPiasters: Long,
+    val finalBalancePiasters: Long
+)
+
 data class DashboardSummary(
     val totalIncomingPiasters: Long = 0L,
     val totalOutgoingPiasters: Long = 0L,
@@ -773,6 +782,386 @@ class AccountingRepository(private val db: HesabatyDatabase) {
         return RepoResult.Success(customer)
     }
 
+    suspend fun mergeCustomers(
+        tenantId: String,
+        actor: UserEntity,
+        sourceCustomerId: String,
+        targetCustomerId: String
+    ): RepoResult<CustomerEntity> {
+        if (sourceCustomerId == targetCustomerId) {
+            return RepoResult.Error("يرجى اختيار عميل مختلف للدمج معه")
+        }
+        return db.withTransaction {
+            val source = customerDao.getCustomerById(tenantId, sourceCustomerId)
+                ?: return@withTransaction RepoResult.Error("العميل المصدر غير موجود")
+            val target = customerDao.getCustomerById(tenantId, targetCustomerId)
+                ?: return@withTransaction RepoResult.Error("العميل المستهدف غير موجود")
+
+            mergeCustomersLocked(tenantId, actor, source, target)
+            val updated = customerDao.getCustomerById(tenantId, target.id) ?: target
+            RepoResult.Success(updated)
+        }
+    }
+
+    suspend fun mergeDuplicateSameNameCustomers(
+        tenantId: String,
+        actor: UserEntity
+    ): RepoResult<Int> {
+        return db.withTransaction {
+            val groups = customerDao.getCustomers(tenantId)
+                .groupBy { it.name.trim().lowercase() }
+                .values
+                .filter { it.size > 1 }
+
+            var mergedCount = 0
+            groups.forEach { group ->
+                // Prefer keeping the customer that has a phone number, then oldest createdAt
+                val sorted = group.sortedWith(
+                    compareByDescending<CustomerEntity> { it.phone.isNotBlank() }
+                        .thenBy { it.createdAt }
+                )
+                val target = sorted.first()
+                sorted.drop(1).forEach { source ->
+                    val currentTarget = customerDao.getCustomerById(tenantId, target.id) ?: target
+                    mergeCustomersLocked(tenantId, actor, source, currentTarget)
+                    mergedCount++
+                }
+            }
+            RepoResult.Success(mergedCount)
+        }
+    }
+
+    private suspend fun mergeCustomersLocked(
+        tenantId: String,
+        actor: UserEntity,
+        source: CustomerEntity,
+        target: CustomerEntity
+    ) {
+        salesInvoiceDao.reassignInvoicesCustomer(tenantId, source.id, target.id)
+        paymentDao.reassignPaymentsCustomer(tenantId, source.id, target.id)
+        installmentDao.reassignInstallmentsCustomer(tenantId, source.id, target.id)
+        dailyDao.reassignDailyInvoicesCustomer(tenantId, source.id, target.id)
+        transactionDao.reassignCustomerTransactions(tenantId, source.id, target.id)
+
+        // Also connect any duplicate OPEN daily invoices now owned by target into one open invoice
+        val openForTarget = dailyDao.getCustomerDailyInvoicesByStatus(tenantId, target.id, DailyInvoiceStatuses.OPEN)
+        if (openForTarget.size > 1) {
+            val primary = openForTarget.first()
+            var extraPaid = 0L
+            openForTarget.drop(1).forEach { dup ->
+                val items = dailyDao.getDailyItems(tenantId, dup.id)
+                if (items.isNotEmpty()) {
+                    dailyDao.upsertDailyItems(items.map { it.copy(dailyInvoiceId = primary.id) })
+                }
+                val dupPayments = paymentDao.getPaymentsForDailyOrLinkedInvoice(tenantId, dup.id, dup.linkedSalesInvoiceId)
+                if (dupPayments.isNotEmpty()) {
+                    paymentDao.upsertPayments(dupPayments.map { it.copy(dailyInvoiceId = primary.id) })
+                }
+                extraPaid += dup.paidPiasters
+                dailyDao.deleteDailyInvoice(tenantId, dup.id)
+            }
+            if (extraPaid > 0L) {
+                val curPrimary = dailyDao.getDailyInvoiceById(tenantId, primary.id) ?: primary
+                dailyDao.upsertDailyInvoice(curPrimary.copy(paidPiasters = curPrimary.paidPiasters + extraPaid))
+            }
+            recalculateDailyInvoiceTotals(tenantId, primary.id)
+        }
+
+        val mergedNotes = listOf(target.notes.trim(), source.notes.trim())
+            .filter { it.isNotBlank() }
+            .distinct()
+            .joinToString(" | ")
+
+        customerDao.upsertCustomer(
+            target.copy(
+                phone = target.phone.ifBlank { source.phone },
+                whatsappPhone = target.whatsappPhone.ifBlank { source.whatsappPhone },
+                address = target.address.ifBlank { source.address },
+                notes = mergedNotes,
+                openingBalancePiasters = target.openingBalancePiasters + source.openingBalancePiasters,
+                creditLimitPiasters = if (target.creditLimitPiasters > 0L) target.creditLimitPiasters else source.creditLimitPiasters,
+                updatedAt = EgyptTime.nowMillis()
+            )
+        )
+        customerDao.deleteCustomer(tenantId, source.id)
+        recalculateCustomerLedger(tenantId, target.id)
+        recordAudit(
+            tenantId = tenantId,
+            actor = actor,
+            action = "MERGE_CUSTOMERS",
+            entityType = "CUSTOMER",
+            entityId = target.id,
+            details = "دمج العميل \"${source.name}\" في حساب \"${target.name}\""
+        )
+    }
+
+    suspend fun deleteCustomer(
+        tenantId: String,
+        actor: UserEntity,
+        customerId: String
+    ): RepoResult<Unit> {
+        return db.withTransaction {
+            val customer = customerDao.getCustomerById(tenantId, customerId)
+                ?: return@withTransaction RepoResult.Error("العميل غير موجود")
+
+            dailyDao.deleteCustomerDailyItems(tenantId, customerId)
+            dailyDao.deleteCustomerDailyInvoices(tenantId, customerId)
+            installmentDao.deleteCustomerInstallments(tenantId, customerId)
+            salesInvoiceDao.deleteCustomerInvoiceItems(tenantId, customerId)
+            salesInvoiceDao.deleteCustomerInvoices(tenantId, customerId)
+            paymentDao.deleteCustomerPayments(tenantId, customerId)
+            transactionDao.deleteAllCustomerTransactions(tenantId, customerId)
+            customerDao.deleteCustomer(tenantId, customerId)
+
+            recordAudit(
+                tenantId = tenantId,
+                actor = actor,
+                action = "DELETE_CUSTOMER",
+                entityType = "CUSTOMER",
+                entityId = customerId,
+                details = "حذف العميل \"${customer.name}\" وكل معاملاته"
+            )
+            RepoResult.Success(Unit)
+        }
+    }
+
+    suspend fun settleCustomerAccount(
+        tenantId: String,
+        actor: UserEntity,
+        customerId: String,
+        paidAmountPiasters: Long,
+        paymentMethod: String,
+        closeOpenDailyInvoices: Boolean = true,
+        notes: String = "",
+        idempotencyKey: String = UUID.randomUUID().toString()
+    ): RepoResult<CustomerSettlementSummary> {
+        return db.withTransaction {
+            val existingPay = paymentDao.getByIdempotencyKey(tenantId, idempotencyKey)
+            if (existingPay != null) {
+                val cur = customerDao.getCustomerById(tenantId, customerId)
+                return@withTransaction RepoResult.Success(
+                    CustomerSettlementSummary(
+                        customerId = customerId,
+                        closedOpenDailyCount = 0,
+                        settledPreviousBalancePiasters = existingPay.amountPiasters,
+                        paidAmountPiasters = existingPay.amountPiasters,
+                        discountPiasters = 0L,
+                        finalBalancePiasters = cur?.currentBalancePiasters ?: 0L
+                    )
+                )
+            }
+
+            if (customerDao.getCustomerById(tenantId, customerId) == null) {
+                return@withTransaction RepoResult.Error("العميل غير موجود")
+            }
+
+            var closedDailyCount = 0
+            if (closeOpenDailyInvoices) {
+                val openDailies = dailyDao.getCustomerDailyInvoicesByStatus(tenantId, customerId, DailyInvoiceStatuses.OPEN)
+                openDailies.forEach { daily ->
+                    val items = dailyDao.getDailyItems(tenantId, daily.id)
+                    if (items.isEmpty()) {
+                        if (daily.paidPiasters == 0L && !daily.isPostedToLedger) {
+                            dailyDao.deleteDailyInvoice(tenantId, daily.id)
+                        }
+                    } else {
+                        closeDailyInvoiceLocked(tenantId, actor, daily, items)
+                        closedDailyCount++
+                    }
+                }
+                if (closedDailyCount > 0) {
+                    recalculateCustomerLedger(tenantId, customerId)
+                }
+            }
+
+            val customer = customerDao.getCustomerById(tenantId, customerId)!!
+            val netBalance = customer.currentBalancePiasters
+            if (netBalance == 0L) {
+                if (closedDailyCount == 0) {
+                    return@withTransaction RepoResult.Error("حساب العميل خالص بالفعل (الرصيد 0)")
+                }
+                return@withTransaction RepoResult.Success(
+                    CustomerSettlementSummary(
+                        customerId = customerId,
+                        closedOpenDailyCount = closedDailyCount,
+                        settledPreviousBalancePiasters = 0L,
+                        paidAmountPiasters = 0L,
+                        discountPiasters = 0L,
+                        finalBalancePiasters = 0L
+                    )
+                )
+            }
+
+            val now = EgyptTime.nowMillis()
+            val cleanNotes = notes.trim()
+            var recordedPaid = 0L
+            var recordedDiscount = 0L
+
+            if (netBalance > 0L) {
+                if (paidAmountPiasters < 0L) {
+                    return@withTransaction RepoResult.Error("المبلغ المدفوع لا يمكن أن يكون سالبًا")
+                }
+                if (paidAmountPiasters > netBalance) {
+                    return@withTransaction RepoResult.Error(
+                        "المبلغ المدفوع (${MoneyFormatter.formatEgp(paidAmountPiasters)}) يتجاوز إجمالي المستحق (${MoneyFormatter.formatEgp(netBalance)})"
+                    )
+                }
+                recordedPaid = paidAmountPiasters
+                recordedDiscount = netBalance - paidAmountPiasters
+
+                if (recordedPaid > 0L) {
+                    val safeMethod = paymentMethod.ifBlank { PaymentMethods.CASH }
+                    val paymentId = UUID.randomUUID().toString()
+                    paymentDao.upsertPayment(
+                        PaymentEntity(
+                            id = paymentId,
+                            tenantId = tenantId,
+                            customerId = customerId,
+                            invoiceId = null,
+                            installmentId = null,
+                            amountPiasters = recordedPaid,
+                            paymentMethod = safeMethod,
+                            excessRecordedAsCredit = false,
+                            notes = buildString {
+                                append("تصفية حساب العميل")
+                                if (cleanNotes.isNotEmpty()) append(" — $cleanNotes")
+                            },
+                            idempotencyKey = idempotencyKey,
+                            createdByUserId = actor.id,
+                            createdAt = now
+                        )
+                    )
+                    transactionDao.upsertCustomerTransaction(
+                        CustomerTransactionEntity(
+                            id = UUID.randomUUID().toString(),
+                            tenantId = tenantId,
+                            customerId = customerId,
+                            type = CustomerTxTypes.PAYMENT,
+                            amountPiasters = recordedPaid,
+                            signedDeltaPiasters = -recordedPaid,
+                            runningBalancePiasters = 0L,
+                            paymentMethod = safeMethod,
+                            referenceId = paymentId,
+                            description = buildString {
+                                append("تحصيل تصفية حساب (${PaymentMethods.arabicLabel(safeMethod)})")
+                                if (cleanNotes.isNotEmpty()) append(" — $cleanNotes")
+                            },
+                            createdByUserId = actor.id,
+                            createdAt = now
+                        )
+                    )
+                }
+
+                if (recordedDiscount > 0L) {
+                    transactionDao.upsertCustomerTransaction(
+                        CustomerTransactionEntity(
+                            id = UUID.randomUUID().toString(),
+                            tenantId = tenantId,
+                            customerId = customerId,
+                            type = CustomerTxTypes.ADJUSTMENT,
+                            amountPiasters = recordedDiscount,
+                            signedDeltaPiasters = -recordedDiscount,
+                            runningBalancePiasters = 0L,
+                            paymentMethod = PaymentMethods.NONE,
+                            referenceId = customerId,
+                            description = buildString {
+                                append("خصم / تسوية تصفية حساب")
+                                if (cleanNotes.isNotEmpty()) append(" — $cleanNotes")
+                            },
+                            createdByUserId = actor.id,
+                            createdAt = now + 1L
+                        )
+                    )
+                }
+            } else {
+                // Customer holds credit balance (< 0); settle credit back to zero
+                val creditToZero = -netBalance
+                transactionDao.upsertCustomerTransaction(
+                    CustomerTransactionEntity(
+                        id = UUID.randomUUID().toString(),
+                        tenantId = tenantId,
+                        customerId = customerId,
+                        type = CustomerTxTypes.ADJUSTMENT,
+                        amountPiasters = creditToZero,
+                        signedDeltaPiasters = creditToZero,
+                        runningBalancePiasters = 0L,
+                        paymentMethod = PaymentMethods.NONE,
+                        referenceId = customerId,
+                        description = buildString {
+                            append("تصفية رصيد دائن للعميل")
+                            if (cleanNotes.isNotEmpty()) append(" — $cleanNotes")
+                        },
+                        createdByUserId = actor.id,
+                        createdAt = now
+                    )
+                )
+            }
+
+            // Clear all open customer invoices and installments so no overdue flags remain
+            val openInvoices = salesInvoiceDao.getCustomerInvoices(tenantId, customerId)
+                .filter { it.remainingPiasters > 0L || it.status != InvoiceStatuses.PAID }
+            if (openInvoices.isNotEmpty()) {
+                salesInvoiceDao.upsertInvoices(
+                    openInvoices.map { inv ->
+                        inv.copy(
+                            remainingPiasters = 0L,
+                            status = InvoiceStatuses.PAID
+                        )
+                    }
+                )
+            }
+
+            val openInstallments = installmentDao.getCustomerInstallments(tenantId, customerId)
+                .filter { it.remainingPiasters > 0L || it.status != InstallmentStatuses.PAID }
+            if (openInstallments.isNotEmpty()) {
+                installmentDao.upsertInstallments(
+                    openInstallments.map { inst ->
+                        inst.copy(
+                            remainingPiasters = 0L,
+                            status = InstallmentStatuses.PAID
+                        )
+                    }
+                )
+            }
+
+            val closedDailiesWithRem = dailyDao.getCustomerDailyInvoicesByStatus(tenantId, customerId, DailyInvoiceStatuses.CLOSED)
+                .filter { it.remainingPiasters > 0L }
+            if (closedDailiesWithRem.isNotEmpty()) {
+                dailyDao.upsertDailyInvoices(
+                    closedDailiesWithRem.map { d ->
+                        d.copy(remainingPiasters = 0L)
+                    }
+                )
+            }
+
+            recalculateCustomerLedger(tenantId, customerId)
+            val updated = customerDao.getCustomerById(tenantId, customerId) ?: customer
+            recordAudit(
+                tenantId = tenantId,
+                actor = actor,
+                action = "SETTLE_CUSTOMER",
+                entityType = "CUSTOMER",
+                entityId = customerId,
+                details = buildString {
+                    append("تصفية حساب العميل \"${customer.name}\"")
+                    if (recordedPaid > 0L) append(" • تحصيل ${MoneyFormatter.formatEgp(recordedPaid)}")
+                    if (recordedDiscount > 0L) append(" • خصم تصفية ${MoneyFormatter.formatEgp(recordedDiscount)}")
+                    if (closedDailyCount > 0) append(" • إغلاق $closedDailyCount فاتورة يومية")
+                }
+            )
+            RepoResult.Success(
+                CustomerSettlementSummary(
+                    customerId = customerId,
+                    closedOpenDailyCount = closedDailyCount,
+                    settledPreviousBalancePiasters = netBalance,
+                    paidAmountPiasters = recordedPaid,
+                    discountPiasters = recordedDiscount,
+                    finalBalancePiasters = updated.currentBalancePiasters
+                )
+            )
+        }
+    }
+
     suspend fun updateCustomerCreditLimit(
         tenantId: String,
         actor: UserEntity,
@@ -1153,6 +1542,16 @@ class AccountingRepository(private val db: HesabatyDatabase) {
             val customer = customerDao.getCustomerById(tenantId, customerId)
                 ?: return@withTransaction RepoResult.Error("العميل غير موجود")
 
+            // Keep daily withdrawals connected: reuse existing OPEN daily invoice for this customer
+            val existingOpen = dailyDao.getCustomerDailyInvoicesByStatus(
+                tenantId = tenantId,
+                customerId = customerId,
+                status = DailyInvoiceStatuses.OPEN
+            ).firstOrNull()
+            if (existingOpen != null) {
+                return@withTransaction RepoResult.Success(existingOpen)
+            }
+
             val now = EgyptTime.nowMillis()
             val seq = dailyDao.countDailyInvoices(tenantId) + 1
             val number = "DW-${seq.toString().padStart(5, '0')}"
@@ -1388,90 +1787,7 @@ class AccountingRepository(private val db: HesabatyDatabase) {
                 return@withTransaction RepoResult.Error("لا يمكن إغلاق فاتورة سحب يومي فارغة")
             }
 
-            val total = items.sumOf { it.lineTotalPiasters }
-            val totalQty = items.sumOf { it.quantityMilli }
-            val now = EgyptTime.nowMillis()
-
-            // Delta posting guarantees ZERO double-counting even if reopened and re-closed!
-            val unpostedDelta = total - daily.postedTotalPiasters
-            var linkedSalesId = daily.linkedSalesInvoiceId
-
-            if (unpostedDelta != 0L) {
-                transactionDao.upsertCustomerTransaction(
-                    CustomerTransactionEntity(
-                        id = UUID.randomUUID().toString(),
-                        tenantId = tenantId,
-                        customerId = daily.customerId,
-                        type = CustomerTxTypes.DAILY_WITHDRAWAL_CLOSE,
-                        amountPiasters = kotlin.math.abs(unpostedDelta),
-                        signedDeltaPiasters = unpostedDelta,
-                        runningBalancePiasters = 0L,
-                        paymentMethod = PaymentMethods.NONE,
-                        referenceId = dailyInvoiceId,
-                        description = if (!daily.isPostedToLedger) {
-                            "إغلاق فاتورة سحب يومي ${daily.invoiceNumber} (${items.size} سحبات)"
-                        } else {
-                            "تعديل إغلاق فاتورة سحب يومي ${daily.invoiceNumber} بعد إعادة الفتح"
-                        },
-                        createdByUserId = actor.id,
-                        createdAt = now
-                    )
-                )
-            }
-
-            // Mirror or update a single linked SalesInvoice for unified reporting
-            val rem = (total - daily.paidPiasters).coerceAtLeast(0L)
-            val invStatus = when {
-                rem == 0L -> InvoiceStatuses.PAID
-                daily.paidPiasters > 0L -> InvoiceStatuses.PARTIAL
-                else -> InvoiceStatuses.UNPAID
-            }
-            if (linkedSalesId == null) {
-                linkedSalesId = UUID.randomUUID().toString()
-                salesInvoiceDao.upsertInvoice(
-                    SalesInvoiceEntity(
-                        id = linkedSalesId,
-                        tenantId = tenantId,
-                        customerId = daily.customerId,
-                        invoiceNumber = daily.invoiceNumber,
-                        saleType = if (rem == 0L) SaleTypes.CASH else SaleTypes.CREDIT,
-                        paymentMethod = if (daily.paidPiasters > 0L) PaymentMethods.CASH else PaymentMethods.NONE,
-                        totalPiasters = total,
-                        paidPiasters = daily.paidPiasters,
-                        remainingPiasters = rem,
-                        notes = "فاتورة سحب يومي (${items.size} سحبات)",
-                        status = invStatus,
-                        sourceDailyInvoiceId = dailyInvoiceId,
-                        idempotencyKey = "daily_close_$dailyInvoiceId",
-                        createdByUserId = actor.id,
-                        createdAt = now
-                    )
-                )
-            } else {
-                salesInvoiceDao.getInvoiceById(tenantId, linkedSalesId)?.let { existingSales ->
-                    salesInvoiceDao.upsertInvoice(
-                        existingSales.copy(
-                            totalPiasters = total,
-                            paidPiasters = daily.paidPiasters,
-                            remainingPiasters = rem,
-                            status = invStatus
-                        )
-                    )
-                }
-            }
-
-            val closed = daily.copy(
-                status = DailyInvoiceStatuses.CLOSED,
-                withdrawalsCount = items.size,
-                totalQuantityMilli = totalQty,
-                totalPiasters = total,
-                remainingPiasters = rem,
-                isPostedToLedger = true,
-                postedTotalPiasters = total,
-                linkedSalesInvoiceId = linkedSalesId,
-                closedAt = now
-            )
-            dailyDao.upsertDailyInvoice(closed)
+            val closed = closeDailyInvoiceLocked(tenantId, actor, daily, items)
             recalculateCustomerLedger(tenantId, daily.customerId)
             recordAudit(
                 tenantId,
@@ -1479,10 +1795,101 @@ class AccountingRepository(private val db: HesabatyDatabase) {
                 "CLOSE_DAILY_INVOICE",
                 "DAILY_WITHDRAWAL",
                 dailyInvoiceId,
-                "إغلاق فاتورة سحب يومي ${daily.invoiceNumber} بإجمالي ${MoneyFormatter.formatEgp(total)}"
+                "إغلاق فاتورة سحب يومي ${daily.invoiceNumber} بإجمالي ${MoneyFormatter.formatEgp(closed.totalPiasters)}"
             )
             RepoResult.Success(closed)
         }
+    }
+
+    private suspend fun closeDailyInvoiceLocked(
+        tenantId: String,
+        actor: UserEntity,
+        daily: DailyWithdrawalInvoiceEntity,
+        items: List<DailyWithdrawalItemEntity>
+    ): DailyWithdrawalInvoiceEntity {
+        val total = items.sumOf { it.lineTotalPiasters }
+        val totalQty = items.sumOf { it.quantityMilli }
+        val now = EgyptTime.nowMillis()
+
+        val unpostedDelta = total - daily.postedTotalPiasters
+        var linkedSalesId = daily.linkedSalesInvoiceId
+
+        if (unpostedDelta != 0L) {
+            transactionDao.upsertCustomerTransaction(
+                CustomerTransactionEntity(
+                    id = UUID.randomUUID().toString(),
+                    tenantId = tenantId,
+                    customerId = daily.customerId,
+                    type = CustomerTxTypes.DAILY_WITHDRAWAL_CLOSE,
+                    amountPiasters = kotlin.math.abs(unpostedDelta),
+                    signedDeltaPiasters = unpostedDelta,
+                    runningBalancePiasters = 0L,
+                    paymentMethod = PaymentMethods.NONE,
+                    referenceId = daily.id,
+                    description = if (!daily.isPostedToLedger) {
+                        "إغلاق فاتورة سحب يومي ${daily.invoiceNumber} (${items.size} سحبات)"
+                    } else {
+                        "تعديل إغلاق فاتورة سحب يومي ${daily.invoiceNumber} بعد إعادة الفتح"
+                    },
+                    createdByUserId = actor.id,
+                    createdAt = now
+                )
+            )
+        }
+
+        val rem = (total - daily.paidPiasters).coerceAtLeast(0L)
+        val invStatus = when {
+            rem == 0L -> InvoiceStatuses.PAID
+            daily.paidPiasters > 0L -> InvoiceStatuses.PARTIAL
+            else -> InvoiceStatuses.UNPAID
+        }
+        if (linkedSalesId == null) {
+            linkedSalesId = UUID.randomUUID().toString()
+            salesInvoiceDao.upsertInvoice(
+                SalesInvoiceEntity(
+                    id = linkedSalesId,
+                    tenantId = tenantId,
+                    customerId = daily.customerId,
+                    invoiceNumber = daily.invoiceNumber,
+                    saleType = if (rem == 0L) SaleTypes.CASH else SaleTypes.CREDIT,
+                    paymentMethod = if (daily.paidPiasters > 0L) PaymentMethods.CASH else PaymentMethods.NONE,
+                    totalPiasters = total,
+                    paidPiasters = daily.paidPiasters,
+                    remainingPiasters = rem,
+                    notes = "فاتورة سحب يومي (${items.size} سحبات)",
+                    status = invStatus,
+                    sourceDailyInvoiceId = daily.id,
+                    idempotencyKey = "daily_close_${daily.id}",
+                    createdByUserId = actor.id,
+                    createdAt = now
+                )
+            )
+        } else {
+            salesInvoiceDao.getInvoiceById(tenantId, linkedSalesId)?.let { existingSales ->
+                salesInvoiceDao.upsertInvoice(
+                    existingSales.copy(
+                        totalPiasters = total,
+                        paidPiasters = daily.paidPiasters,
+                        remainingPiasters = rem,
+                        status = invStatus
+                    )
+                )
+            }
+        }
+
+        val closed = daily.copy(
+            status = DailyInvoiceStatuses.CLOSED,
+            withdrawalsCount = items.size,
+            totalQuantityMilli = totalQty,
+            totalPiasters = total,
+            remainingPiasters = rem,
+            isPostedToLedger = true,
+            postedTotalPiasters = total,
+            linkedSalesInvoiceId = linkedSalesId,
+            closedAt = now
+        )
+        dailyDao.upsertDailyInvoice(closed)
+        return closed
     }
 
     suspend fun reopenDailyWithdrawalInvoice(
@@ -1516,6 +1923,130 @@ class AccountingRepository(private val db: HesabatyDatabase) {
                 "إعادة فتح فاتورة سحب يومي ${daily.invoiceNumber} — السبب: $cleanReason"
             )
             RepoResult.Success(reopened)
+        }
+    }
+
+    suspend fun deleteDailyWithdrawalItem(
+        tenantId: String,
+        actor: UserEntity,
+        dailyInvoiceId: String,
+        itemId: String
+    ): RepoResult<Unit> {
+        return db.withTransaction {
+            val daily = dailyDao.getDailyInvoiceById(tenantId, dailyInvoiceId)
+                ?: return@withTransaction RepoResult.Error("الفاتورة اليومية غير موجودة")
+            if (daily.status != DailyInvoiceStatuses.OPEN) {
+                return@withTransaction RepoResult.Error("لا يمكن حذف سحبة من فاتورة مغلقة. أعد فتحها أولاً.")
+            }
+            val item = dailyDao.getDailyItemById(tenantId, itemId)
+            if (item == null || item.dailyInvoiceId != dailyInvoiceId) {
+                return@withTransaction RepoResult.Error("السحبة غير موجودة")
+            }
+            dailyDao.deleteDailyItemById(tenantId, itemId)
+            recalculateDailyInvoiceTotals(tenantId, dailyInvoiceId)
+            recordAudit(
+                tenantId,
+                actor,
+                "DELETE_DAILY_WITHDRAWAL_ITEM",
+                "DAILY_WITHDRAWAL",
+                dailyInvoiceId,
+                "حذف سحبة (${item.description}) بقيمة ${MoneyFormatter.formatEgp(item.lineTotalPiasters)} من ${daily.invoiceNumber}"
+            )
+            RepoResult.Success(Unit)
+        }
+    }
+
+    suspend fun deleteDailyWithdrawalInvoice(
+        tenantId: String,
+        actor: UserEntity,
+        dailyInvoiceId: String
+    ): RepoResult<Unit> {
+        return db.withTransaction {
+            val daily = dailyDao.getDailyInvoiceById(tenantId, dailyInvoiceId)
+                ?: return@withTransaction RepoResult.Error("الفاتورة اليومية غير موجودة")
+
+            val linkedPayments = paymentDao.getPaymentsForDailyOrLinkedInvoice(
+                tenantId = tenantId,
+                dailyInvoiceId = dailyInvoiceId,
+                linkedSalesId = daily.linkedSalesInvoiceId
+            )
+            linkedPayments.forEach { p ->
+                transactionDao.deleteCustomerTransactionsByReference(tenantId, daily.customerId, p.id)
+                paymentDao.deletePaymentById(tenantId, p.id)
+            }
+            transactionDao.deleteCustomerTransactionsByReference(tenantId, daily.customerId, dailyInvoiceId)
+            daily.linkedSalesInvoiceId?.let { linkedId ->
+                transactionDao.deleteCustomerTransactionsByReference(tenantId, daily.customerId, linkedId)
+                salesInvoiceDao.deleteInvoice(tenantId, linkedId)
+            }
+            dailyDao.deleteDailyItemsForInvoice(tenantId, dailyInvoiceId)
+            dailyDao.deleteDailyInvoice(tenantId, dailyInvoiceId)
+            recalculateCustomerLedger(tenantId, daily.customerId)
+
+            recordAudit(
+                tenantId,
+                actor,
+                "DELETE_DAILY_INVOICE",
+                "DAILY_WITHDRAWAL",
+                dailyInvoiceId,
+                "حذف فاتورة السحب اليومي ${daily.invoiceNumber} بقيمة ${MoneyFormatter.formatEgp(daily.totalPiasters)}"
+            )
+            RepoResult.Success(Unit)
+        }
+    }
+
+    suspend fun mergeDuplicateOpenDailyInvoices(
+        tenantId: String,
+        actor: UserEntity
+    ): RepoResult<Int> {
+        return db.withTransaction {
+            val openInvoices = dailyDao.getAllDailyInvoices(tenantId)
+                .filter { it.status == DailyInvoiceStatuses.OPEN }
+                .sortedBy { it.createdAt }
+                .groupBy { it.customerId }
+
+            var mergedCount = 0
+            openInvoices.forEach { (_, list) ->
+                if (list.size > 1) {
+                    val primary = list.first()
+                    var extraPaid = 0L
+                    list.drop(1).forEach { dup ->
+                        val items = dailyDao.getDailyItems(tenantId, dup.id)
+                        if (items.isNotEmpty()) {
+                            dailyDao.upsertDailyItems(items.map { it.copy(dailyInvoiceId = primary.id) })
+                        }
+                        val dupPayments = paymentDao.getPaymentsForDailyOrLinkedInvoice(
+                            tenantId = tenantId,
+                            dailyInvoiceId = dup.id,
+                            linkedSalesId = dup.linkedSalesInvoiceId
+                        )
+                        if (dupPayments.isNotEmpty()) {
+                            paymentDao.upsertPayments(dupPayments.map { it.copy(dailyInvoiceId = primary.id) })
+                        }
+                        extraPaid += dup.paidPiasters
+                        dailyDao.deleteDailyInvoice(tenantId, dup.id)
+                        mergedCount++
+                    }
+                    if (extraPaid > 0L) {
+                        val currentPrimary = dailyDao.getDailyInvoiceById(tenantId, primary.id) ?: primary
+                        dailyDao.upsertDailyInvoice(
+                            currentPrimary.copy(paidPiasters = currentPrimary.paidPiasters + extraPaid)
+                        )
+                    }
+                    recalculateDailyInvoiceTotals(tenantId, primary.id)
+                }
+            }
+            if (mergedCount > 0) {
+                recordAudit(
+                    tenantId,
+                    actor,
+                    "MERGE_DAILY_INVOICES",
+                    "DAILY_WITHDRAWAL",
+                    tenantId,
+                    "دمج $mergedCount فاتورة سحب يومي مكررة في فواتير متصلة"
+                )
+            }
+            RepoResult.Success(mergedCount)
         }
     }
 

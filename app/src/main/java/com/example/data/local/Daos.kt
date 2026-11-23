@@ -77,6 +77,9 @@ interface CustomerDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertCustomers(customers: List<CustomerEntity>)
+
+    @Query("DELETE FROM customers WHERE tenantId = :tenantId AND id = :customerId")
+    suspend fun deleteCustomer(tenantId: String, customerId: String)
 }
 
 @Dao
@@ -132,6 +135,18 @@ interface SalesInvoiceDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertInvoices(invoices: List<SalesInvoiceEntity>)
 
+    @Query("DELETE FROM sales_invoices WHERE tenantId = :tenantId AND id = :invoiceId")
+    suspend fun deleteInvoice(tenantId: String, invoiceId: String)
+
+    @Query("UPDATE sales_invoices SET customerId = :targetCustomerId WHERE tenantId = :tenantId AND customerId = :sourceCustomerId")
+    suspend fun reassignInvoicesCustomer(tenantId: String, sourceCustomerId: String, targetCustomerId: String)
+
+    @Query("DELETE FROM sales_invoice_items WHERE tenantId = :tenantId AND invoiceId IN (SELECT id FROM sales_invoices WHERE tenantId = :tenantId AND customerId = :customerId)")
+    suspend fun deleteCustomerInvoiceItems(tenantId: String, customerId: String)
+
+    @Query("DELETE FROM sales_invoices WHERE tenantId = :tenantId AND customerId = :customerId")
+    suspend fun deleteCustomerInvoices(tenantId: String, customerId: String)
+
     @Query("SELECT * FROM sales_invoice_items WHERE tenantId = :tenantId AND invoiceId = :invoiceId ORDER BY sortOrder ASC")
     fun observeInvoiceItems(tenantId: String, invoiceId: String): Flow<List<SalesInvoiceItemEntity>>
 
@@ -167,6 +182,18 @@ interface PaymentDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertPayments(payments: List<PaymentEntity>)
+
+    @Query("SELECT * FROM payments WHERE tenantId = :tenantId AND (dailyInvoiceId = :dailyInvoiceId OR (:linkedSalesId IS NOT NULL AND invoiceId = :linkedSalesId))")
+    suspend fun getPaymentsForDailyOrLinkedInvoice(tenantId: String, dailyInvoiceId: String, linkedSalesId: String?): List<PaymentEntity>
+
+    @Query("DELETE FROM payments WHERE tenantId = :tenantId AND id = :paymentId")
+    suspend fun deletePaymentById(tenantId: String, paymentId: String)
+
+    @Query("UPDATE payments SET customerId = :targetCustomerId WHERE tenantId = :tenantId AND customerId = :sourceCustomerId")
+    suspend fun reassignPaymentsCustomer(tenantId: String, sourceCustomerId: String, targetCustomerId: String)
+
+    @Query("DELETE FROM payments WHERE tenantId = :tenantId AND customerId = :customerId")
+    suspend fun deleteCustomerPayments(tenantId: String, customerId: String)
 }
 
 @Dao
@@ -211,6 +238,15 @@ interface TransactionDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertCustomerTransactions(txs: List<CustomerTransactionEntity>)
+
+    @Query("DELETE FROM customer_transactions WHERE tenantId = :tenantId AND customerId = :customerId AND referenceId = :referenceId")
+    suspend fun deleteCustomerTransactionsByReference(tenantId: String, customerId: String, referenceId: String)
+
+    @Query("UPDATE customer_transactions SET customerId = :targetCustomerId WHERE tenantId = :tenantId AND customerId = :sourceCustomerId")
+    suspend fun reassignCustomerTransactions(tenantId: String, sourceCustomerId: String, targetCustomerId: String)
+
+    @Query("DELETE FROM customer_transactions WHERE tenantId = :tenantId AND customerId = :customerId")
+    suspend fun deleteAllCustomerTransactions(tenantId: String, customerId: String)
 }
 
 @Dao
@@ -251,6 +287,30 @@ interface DailyWithdrawalDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertDailyItem(item: DailyWithdrawalItemEntity)
 
+    @Query("SELECT * FROM daily_withdrawal_invoices WHERE tenantId = :tenantId AND customerId = :customerId AND status = :status ORDER BY createdAt ASC")
+    suspend fun getCustomerDailyInvoicesByStatus(tenantId: String, customerId: String, status: String = DailyInvoiceStatuses.OPEN): List<DailyWithdrawalInvoiceEntity>
+
+    @Query("SELECT * FROM daily_withdrawal_items WHERE tenantId = :tenantId AND id = :itemId LIMIT 1")
+    suspend fun getDailyItemById(tenantId: String, itemId: String): DailyWithdrawalItemEntity?
+
+    @Query("DELETE FROM daily_withdrawal_items WHERE tenantId = :tenantId AND id = :itemId")
+    suspend fun deleteDailyItemById(tenantId: String, itemId: String)
+
+    @Query("DELETE FROM daily_withdrawal_items WHERE tenantId = :tenantId AND dailyInvoiceId = :dailyInvoiceId")
+    suspend fun deleteDailyItemsForInvoice(tenantId: String, dailyInvoiceId: String)
+
+    @Query("DELETE FROM daily_withdrawal_invoices WHERE tenantId = :tenantId AND id = :dailyInvoiceId")
+    suspend fun deleteDailyInvoice(tenantId: String, dailyInvoiceId: String)
+
+    @Query("UPDATE daily_withdrawal_invoices SET customerId = :targetCustomerId WHERE tenantId = :tenantId AND customerId = :sourceCustomerId")
+    suspend fun reassignDailyInvoicesCustomer(tenantId: String, sourceCustomerId: String, targetCustomerId: String)
+
+    @Query("DELETE FROM daily_withdrawal_items WHERE tenantId = :tenantId AND dailyInvoiceId IN (SELECT id FROM daily_withdrawal_invoices WHERE tenantId = :tenantId AND customerId = :customerId)")
+    suspend fun deleteCustomerDailyItems(tenantId: String, customerId: String)
+
+    @Query("DELETE FROM daily_withdrawal_invoices WHERE tenantId = :tenantId AND customerId = :customerId")
+    suspend fun deleteCustomerDailyInvoices(tenantId: String, customerId: String)
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertDailyItems(items: List<DailyWithdrawalItemEntity>)
 }
@@ -280,6 +340,12 @@ interface InstallmentDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertInstallments(installments: List<InstallmentScheduleEntity>)
+
+    @Query("UPDATE installment_schedules SET customerId = :targetCustomerId WHERE tenantId = :tenantId AND customerId = :sourceCustomerId")
+    suspend fun reassignInstallmentsCustomer(tenantId: String, sourceCustomerId: String, targetCustomerId: String)
+
+    @Query("DELETE FROM installment_schedules WHERE tenantId = :tenantId AND customerId = :customerId")
+    suspend fun deleteCustomerInstallments(tenantId: String, customerId: String)
 }
 
 @Dao

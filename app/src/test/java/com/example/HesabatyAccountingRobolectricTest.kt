@@ -19,8 +19,10 @@ import com.example.core.WhatsAppHelper
 import com.example.data.backup.BackupManager
 import com.example.data.backup.BackupOpResult
 import com.example.data.local.AppSettingEntity
+import com.example.data.local.CustomerAccountStatus
 import com.example.data.local.DailyInvoiceStatuses
 import com.example.data.local.HesabatyDatabase
+import com.example.data.local.InstallmentStatuses
 import com.example.data.local.InvoiceStatuses
 import com.example.data.local.PaymentMethods
 import com.example.data.local.PurchaseTypes
@@ -1131,5 +1133,201 @@ class HesabatyAccountingRobolectricTest {
         assertEquals(todaySale.amountPiasters, restoredToday?.amountPiasters)
         assertEquals("كرتونة", restoredToday?.unitLabel)
         assertEquals(3_000L, restoredToday?.quantityMilli)
+    }
+
+    @Test
+    fun test28_dailyWithdrawalsConnectPerCustomerMergeAndDelete() = runTest {
+        val cid = (accRepo.addCustomer(tenantAId, ownerA, "عميل متصل", "01055556666", "", "", "", 0L) as RepoResult.Success).data.id
+
+        // 1) Opening daily withdrawal twice for the same customer must connect to the SAME OPEN invoice
+        val firstOpen = (accRepo.createDailyWithdrawalInvoice(tenantAId, ownerA, cid) as RepoResult.Success).data
+        val secondOpen = (accRepo.createDailyWithdrawalInvoice(tenantAId, ownerA, cid) as RepoResult.Success).data
+        assertEquals(firstOpen.id, secondOpen.id)
+        assertEquals(1, accRepo.observeDailyInvoices(tenantAId).first().count { it.customerId == cid })
+
+        // 2) Add two withdrawal items and delete one added by mistake
+        val item1 = (accRepo.addDailyWithdrawalItem(tenantAId, ownerA, firstOpen.id, "صنف صحيح", 10_000L, 2_000L) as RepoResult.Success).data
+        val itemMistake = (accRepo.addDailyWithdrawalItem(tenantAId, ownerA, firstOpen.id, "صنف بالغلط", 5_000L, 1_000L) as RepoResult.Success).data
+        assertEquals(25_000L, db.dailyWithdrawalDao().getDailyInvoiceById(tenantAId, firstOpen.id)!!.totalPiasters)
+
+        val delItemRes = accRepo.deleteDailyWithdrawalItem(tenantAId, ownerA, firstOpen.id, itemMistake.id)
+        assertTrue(delItemRes is RepoResult.Success)
+        val afterItemDelete = db.dailyWithdrawalDao().getDailyInvoiceById(tenantAId, firstOpen.id)!!
+        assertEquals(1, afterItemDelete.withdrawalsCount)
+        assertEquals(20_000L, afterItemDelete.totalPiasters)
+
+        // 3) Simulate legacy duplicate open daily invoices for the same customer and merge them
+        val dupInvoice = com.example.data.local.DailyWithdrawalInvoiceEntity(
+            id = "dup-daily-id",
+            tenantId = tenantAId,
+            customerId = cid,
+            invoiceNumber = "DW-99999",
+            invoiceDateEpochDay = EgyptTime.todayEpochDay(),
+            status = DailyInvoiceStatuses.OPEN,
+            createdByUserId = ownerA.id,
+            createdAt = EgyptTime.nowMillis() + 5000L
+        )
+        db.dailyWithdrawalDao().upsertDailyInvoice(dupInvoice)
+        accRepo.addDailyWithdrawalItem(tenantAId, ownerA, dupInvoice.id, "من الفاتورة المكررة", 12_000L, 1_000L)
+        assertEquals(2, accRepo.observeDailyInvoices(tenantAId).first().count { it.customerId == cid && it.status == DailyInvoiceStatuses.OPEN })
+
+        val mergeRes = accRepo.mergeDuplicateOpenDailyInvoices(tenantAId, ownerA)
+        assertTrue(mergeRes is RepoResult.Success)
+        assertEquals(1, (mergeRes as RepoResult.Success).data)
+        val openAfterMerge = accRepo.observeDailyInvoices(tenantAId).first().filter { it.customerId == cid && it.status == DailyInvoiceStatuses.OPEN }
+        assertEquals(1, openAfterMerge.size)
+        assertEquals(32_000L, openAfterMerge.first().totalPiasters)
+        assertEquals(2, openAfterMerge.first().withdrawalsCount)
+
+        // 4) Close, verify balance = 320 EGP, then delete the whole daily invoice -> balance must cleanly return to 0
+        accRepo.closeDailyWithdrawalInvoice(tenantAId, ownerA, firstOpen.id)
+        assertEquals(32_000L, accRepo.observeCustomer(tenantAId, cid).first()!!.currentBalancePiasters)
+
+        val delInvRes = accRepo.deleteDailyWithdrawalInvoice(tenantAId, ownerA, firstOpen.id)
+        assertTrue(delInvRes is RepoResult.Success)
+        assertEquals(0, accRepo.observeDailyInvoices(tenantAId).first().count { it.customerId == cid })
+        assertEquals(0L, accRepo.observeCustomer(tenantAId, cid).first()!!.currentBalancePiasters)
+        assertTrue(item1.id.isNotBlank())
+    }
+
+    @Test
+    fun test29_mergeDuplicateCustomersAndDeleteCustomer() = runTest {
+        val c1 = (accRepo.addCustomer(tenantAId, ownerA, "asker", "01099762204", "", "", "", 0L) as RepoResult.Success).data
+        val c2 = (accRepo.addCustomer(tenantAId, ownerA, "asker", "", "", "", "", 0L) as RepoResult.Success).data
+
+        // c1: 980 EGP sale, 220 EGP paid => 760 EGP remaining
+        accRepo.createSalesInvoice(
+            tenantId = tenantAId,
+            actor = ownerA,
+            customerId = c1.id,
+            lines = listOf(SaleLineDraft("بضاعة 1", 98_000L, 1_000L)),
+            saleType = SaleTypes.CREDIT,
+            paymentMethod = PaymentMethods.CASH,
+            paidNowPiasters = 22_000L,
+            dueDateMillis = null,
+            installments = emptyList(),
+            notes = ""
+        )
+        // c2: 250 EGP sale, 50 EGP paid => 200 EGP remaining
+        accRepo.createSalesInvoice(
+            tenantId = tenantAId,
+            actor = ownerA,
+            customerId = c2.id,
+            lines = listOf(SaleLineDraft("بضاعة 2", 25_000L, 1_000L)),
+            saleType = SaleTypes.CREDIT,
+            paymentMethod = PaymentMethods.CASH,
+            paidNowPiasters = 5_000L,
+            dueDateMillis = null,
+            installments = emptyList(),
+            notes = ""
+        )
+
+        // Open daily withdrawal on BOTH duplicate accounts
+        val d1 = (accRepo.createDailyWithdrawalInvoice(tenantAId, ownerA, c1.id) as RepoResult.Success).data
+        val d2 = (accRepo.createDailyWithdrawalInvoice(tenantAId, ownerA, c2.id) as RepoResult.Success).data
+        accRepo.addDailyWithdrawalItem(tenantAId, ownerA, d1.id, "سحبة 1", 10_000L, 1_000L)
+        accRepo.addDailyWithdrawalItem(tenantAId, ownerA, d2.id, "سحبة 2", 15_000L, 1_000L)
+
+        // Auto-merge same-name customers ("asker")
+        val mergeRes = accRepo.mergeDuplicateSameNameCustomers(tenantAId, ownerA)
+        assertTrue(mergeRes is RepoResult.Success)
+        assertEquals(1, (mergeRes as RepoResult.Success).data)
+
+        val remainingCustomers = accRepo.observeCustomers(tenantAId).first()
+        assertEquals(1, remainingCustomers.size)
+        val merged = remainingCustomers.first()
+        assertEquals("01099762204", merged.phone)
+        assertEquals(123_000L, merged.totalSalesPiasters)
+        assertEquals(27_000L, merged.totalPaidPiasters)
+        assertEquals(96_000L, merged.currentBalancePiasters)
+
+        // Open daily invoices from both duplicate customers must now be ONE connected invoice with 250 EGP total
+        val openDaily = accRepo.observeDailyInvoices(tenantAId).first().filter { it.customerId == merged.id && it.status == DailyInvoiceStatuses.OPEN }
+        assertEquals(1, openDaily.size)
+        assertEquals(25_000L, openDaily.first().totalPiasters)
+        assertEquals(2, openDaily.first().withdrawalsCount)
+
+        // Deleting customer removes everything cleanly
+        val delRes = accRepo.deleteCustomer(tenantAId, ownerA, merged.id)
+        assertTrue(delRes is RepoResult.Success)
+        assertEquals(0, accRepo.observeCustomers(tenantAId).first().size)
+        assertEquals(0, accRepo.observeDailyInvoices(tenantAId).first().size)
+    }
+
+    @Test
+    fun test30_settleCustomerAccountWithOpenDailyAndDiscount() = runTest {
+        val cid = (accRepo.addCustomer(tenantAId, ownerA, "عميل تصفية", "01022223333", "", "", "", 0L) as RepoResult.Success).data.id
+        val pastDue = EgyptTime.nowMillis() - 2L * 86_400_000L
+
+        // 1) Scheduled sale of 760 EGP (76_000L) with overdue installment
+        accRepo.createSalesInvoice(
+            tenantId = tenantAId,
+            actor = ownerA,
+            customerId = cid,
+            lines = listOf(SaleLineDraft("مشتريات آجلة", 76_000L, 1_000L)),
+            saleType = SaleTypes.SCHEDULED,
+            paymentMethod = PaymentMethods.NONE,
+            paidNowPiasters = 0L,
+            dueDateMillis = pastDue,
+            installments = listOf(com.example.data.repository.InstallmentDraft(pastDue, 76_000L)),
+            notes = ""
+        )
+
+        // 2) Open daily withdrawal of 140 EGP (14_000L) -> total combined due = 900 EGP (90_000L)
+        val openDaily = (accRepo.createDailyWithdrawalInvoice(tenantAId, ownerA, cid) as RepoResult.Success).data
+        accRepo.addDailyWithdrawalItem(tenantAId, ownerA, openDaily.id, "سحبة يومية", 14_000L, 1_000L)
+
+        // 3) Settle with 850 EGP cash + 50 EGP settlement discount + auto-close open daily invoice
+        val settleRes = accRepo.settleCustomerAccount(
+            tenantId = tenantAId,
+            actor = ownerA,
+            customerId = cid,
+            paidAmountPiasters = 85_000L,
+            paymentMethod = PaymentMethods.CASH,
+            closeOpenDailyInvoices = true,
+            notes = "تصفية نهائية"
+        )
+        assertTrue(settleRes is RepoResult.Success)
+        val summary = (settleRes as RepoResult.Success).data
+        assertEquals(1, summary.closedOpenDailyCount)
+        assertEquals(90_000L, summary.settledPreviousBalancePiasters)
+        assertEquals(85_000L, summary.paidAmountPiasters)
+        assertEquals(5_000L, summary.discountPiasters)
+        assertEquals(0L, summary.finalBalancePiasters)
+
+        val settledCust = accRepo.observeCustomer(tenantAId, cid).first()!!
+        assertEquals(0L, settledCust.currentBalancePiasters)
+        assertEquals(CustomerAccountStatus.CLEAR, settledCust.accountStatus)
+
+        // All invoices, installments, and closed daily invoice must have 0 remaining
+        val custInvoices = db.salesInvoiceDao().getCustomerInvoices(tenantAId, cid)
+        assertTrue(custInvoices.isNotEmpty() && custInvoices.all { it.remainingPiasters == 0L && it.status == InvoiceStatuses.PAID })
+        val custInsts = db.installmentDao().getCustomerInstallments(tenantAId, cid)
+        assertTrue(custInsts.isNotEmpty() && custInsts.all { it.remainingPiasters == 0L && it.status == InstallmentStatuses.PAID })
+        val settledDaily = db.dailyWithdrawalDao().getDailyInvoiceById(tenantAId, openDaily.id)!!
+        assertEquals(DailyInvoiceStatuses.CLOSED, settledDaily.status)
+        assertEquals(0L, settledDaily.remainingPiasters)
+
+        // Dashboard incoming reflects ONLY actual cash collected (850 EGP), NOT the 50 EGP discount
+        val dash = accRepo.observeDashboardSummary(tenantAId).first()
+        assertEquals(85_000L, dash.totalIncomingPiasters)
+
+        // Re-settling already-settled 0 balance fails gracefully
+        val repeatRes = accRepo.settleCustomerAccount(tenantAId, ownerA, cid, 0L, PaymentMethods.CASH)
+        assertTrue(repeatRes is RepoResult.Error)
+
+        // 4) Negative credit balance settlement returns balance cleanly to 0
+        accRepo.recordCustomerPayment(
+            tenantId = tenantAId,
+            actor = ownerA,
+            customerId = cid,
+            amountPiasters = 10_000L,
+            paymentMethod = PaymentMethods.CASH,
+            notes = "دفعة مقدمة"
+        )
+        assertEquals(-10_000L, accRepo.observeCustomer(tenantAId, cid).first()!!.currentBalancePiasters)
+        val creditSettle = accRepo.settleCustomerAccount(tenantAId, ownerA, cid, 0L, PaymentMethods.CASH)
+        assertTrue(creditSettle is RepoResult.Success)
+        assertEquals(0L, accRepo.observeCustomer(tenantAId, cid).first()!!.currentBalancePiasters)
     }
 }

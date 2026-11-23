@@ -22,7 +22,10 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ReceiptLong
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.AddShoppingCart
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.DoneAll
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Merge
 import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.Receipt
 import androidx.compose.material.icons.filled.Savings
@@ -30,6 +33,8 @@ import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -43,6 +48,7 @@ import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -63,8 +69,11 @@ import com.example.core.MoneyFormatter
 import com.example.core.PdfInvoiceGenerator
 import com.example.core.WhatsAppHelper
 import com.example.data.local.CustomerAccountStatus
+import com.example.data.local.CustomerEntity
 import com.example.data.local.CustomerTransactionEntity
 import com.example.data.local.CustomerTxTypes
+import com.example.data.local.DailyInvoiceStatuses
+import com.example.data.local.DailyWithdrawalInvoiceEntity
 import com.example.data.local.InstallmentStatuses
 import com.example.data.local.PaymentMethods
 import com.example.data.local.SaleTypes
@@ -75,6 +84,7 @@ import com.example.ui.components.StatusBadge
 import com.example.ui.components.SummaryStatPill
 import com.example.ui.theme.HesabatyThemeExtras
 import com.example.ui.viewmodel.HesabatyViewModel
+import java.util.UUID
 
 @Composable
 fun CustomerDetailScreen(
@@ -97,6 +107,11 @@ fun CustomerDetailScreen(
         .collectAsStateWithLifecycle(initialValue = emptyList())
     val installments by remember(customerId) { viewModel.observeCustomerInstallments(customerId) }
         .collectAsStateWithLifecycle(initialValue = emptyList())
+    val allDailyInvoices by viewModel.dailyInvoices.collectAsStateWithLifecycle()
+    val openDailiesForCustomer = remember(allDailyInvoices, customerId) {
+        allDailyInvoices.filter { it.customerId == customerId && it.status == DailyInvoiceStatuses.OPEN }
+    }
+    val allCustomers by viewModel.customers.collectAsStateWithLifecycle()
     val tenant by viewModel.activeTenant.collectAsStateWithLifecycle()
     val settings by viewModel.appSettings.collectAsStateWithLifecycle()
     val currency = settings?.defaultCurrencyLabel ?: "ج.م"
@@ -105,6 +120,9 @@ fun CustomerDetailScreen(
     var selectedTab by rememberSaveable { mutableIntStateOf(0) }
     var inspectTx by remember { mutableStateOf<CustomerTransactionEntity?>(null) }
     var showEditCreditLimitDialog by remember { mutableStateOf(false) }
+    var showMergeDialog by remember { mutableStateOf(false) }
+    var showDeleteCustomerConfirm by remember { mutableStateOf(false) }
+    var showSettleDialog by remember { mutableStateOf(false) }
     val extras = HesabatyThemeExtras.colors
 
     fun buildCustomerReportModel(): PdfInvoiceGenerator.ReportPrintModel? {
@@ -201,6 +219,20 @@ fun CustomerDetailScreen(
                             modifier = Modifier.testTag("customer_whatsapp_btn")
                         ) {
                             Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "إرسال كشف الحساب صورة عبر WhatsApp", tint = extras.success)
+                        }
+                        if (allCustomers.size > 1) {
+                            IconButton(
+                                onClick = { showMergeDialog = true },
+                                modifier = Modifier.testTag("customer_merge_btn")
+                            ) {
+                                Icon(Icons.Default.Merge, contentDescription = "دمج مع عميل آخر", tint = MaterialTheme.colorScheme.primary)
+                            }
+                        }
+                        IconButton(
+                            onClick = { showDeleteCustomerConfirm = true },
+                            modifier = Modifier.testTag("customer_delete_btn")
+                        ) {
+                            Icon(Icons.Default.Delete, contentDescription = "حذف العميل", tint = extras.danger)
                         }
                     }
                 }
@@ -376,6 +408,25 @@ fun CustomerDetailScreen(
                         Icon(Icons.AutoMirrored.Filled.ReceiptLong, contentDescription = null, modifier = Modifier.size(16.dp))
                         Spacer(modifier = Modifier.width(4.dp))
                         Text("سحب يومي", maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                }
+            }
+
+            if (c.currentBalancePiasters != 0L || openDailiesForCustomer.isNotEmpty()) {
+                item {
+                    OutlinedButton(
+                        onClick = { showSettleDialog = true },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 48.dp)
+                            .testTag("customer_settle_btn")
+                    ) {
+                        Icon(Icons.Default.DoneAll, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = if (c.currentBalancePiasters < 0L) "تصفية الرصيد الدائن للعميل (إرجاع إلى 0)" else "تصفية حساب العميل بالكامل",
+                            fontWeight = FontWeight.Bold
+                        )
                     }
                 }
             }
@@ -660,4 +711,376 @@ fun CustomerDetailScreen(
             }
         )
     }
+
+    if (showMergeDialog && customer != null) {
+        val currentCust = customer!!
+        val otherCustomers = remember(allCustomers, currentCust.id, currentCust.name) {
+            allCustomers
+                .filter { it.id != currentCust.id }
+                .sortedByDescending { it.name.trim().equals(currentCust.name.trim(), ignoreCase = true) }
+        }
+        AlertDialog(
+            onDismissRequest = { showMergeDialog = false },
+            title = { Text("دمج حساب «${currentCust.name}»", fontWeight = FontWeight.Bold) },
+            text = {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 380.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        text = "اختر الحساب الذي تريد دمج جميع فواتير ومدفوعات وسحوبات هذا العميل إليه (سيصبحان عميلاً واحداً متصلاً):",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    LazyColumn(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        items(otherCustomers, key = { it.id }) { target ->
+                            Surface(
+                                onClick = {
+                                    showMergeDialog = false
+                                    viewModel.mergeCustomers(currentCust.id, target.id) { ok, _ ->
+                                        if (ok) onBack()
+                                    }
+                                },
+                                shape = MaterialTheme.shapes.small,
+                                color = MaterialTheme.colorScheme.surfaceVariant,
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(12.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(target.name, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                                        if (target.phone.isNotBlank()) {
+                                            Text(target.phone, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        }
+                                    }
+                                    Text(
+                                        text = MoneyFormatter.formatEgp(target.currentBalancePiasters, currency),
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontWeight = FontWeight.Bold,
+                                        color = if (target.currentBalancePiasters > 0L) extras.danger else extras.success
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showMergeDialog = false }) { Text("إلغاء") }
+            }
+        )
+    }
+
+    if (showDeleteCustomerConfirm && customer != null) {
+        val currentCust = customer!!
+        AlertDialog(
+            onDismissRequest = { showDeleteCustomerConfirm = false },
+            title = { Text("حذف العميل", fontWeight = FontWeight.Bold) },
+            text = {
+                Text("هل تريد حذف العميل «${currentCust.name}» وكل فواتيره وسحوباته ومعاملاته نهائياً؟ (الرصيد الحالي: ${MoneyFormatter.formatEgp(currentCust.currentBalancePiasters, currency)})")
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showDeleteCustomerConfirm = false
+                        viewModel.deleteCustomer(currentCust.id) { ok, _ ->
+                            if (ok) onBack()
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = extras.danger)
+                ) {
+                    Text("حذف نهائي")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteCustomerConfirm = false }) { Text("إلغاء") }
+            }
+        )
+    }
+
+    if (showSettleDialog && customer != null) {
+        val currentCust = customer!!
+        SettleCustomerDialog(
+            customer = currentCust,
+            openDailyInvoices = openDailiesForCustomer,
+            currency = currency,
+            onDismiss = { showSettleDialog = false },
+            onConfirm = { paidPiasters, method, closeOpenDailies, notes, idemKey ->
+                viewModel.settleCustomerAccount(
+                    customerId = currentCust.id,
+                    paidAmountPiasters = paidPiasters,
+                    paymentMethod = method,
+                    closeOpenDailyInvoices = closeOpenDailies,
+                    notes = notes,
+                    idempotencyKey = idemKey
+                ) { ok, _ ->
+                    if (ok) showSettleDialog = false
+                }
+            }
+        )
+    }
+}
+
+@Composable
+fun SettleCustomerDialog(
+    customer: CustomerEntity,
+    openDailyInvoices: List<DailyWithdrawalInvoiceEntity>,
+    currency: String,
+    onDismiss: () -> Unit,
+    onConfirm: (paidPiasters: Long, paymentMethod: String, closeOpenDailies: Boolean, notes: String, idempotencyKey: String) -> Unit
+) {
+    val extras = HesabatyThemeExtras.colors
+    val openDailyRemaining = remember(openDailyInvoices) {
+        openDailyInvoices.sumOf { it.remainingPiasters }
+    }
+    var closeOpenDailies by remember(customer.id) { mutableStateOf(openDailyInvoices.isNotEmpty()) }
+    val totalDuePiasters = customer.currentBalancePiasters + if (closeOpenDailies) openDailyRemaining else 0L
+
+    var paidInput by remember(customer.id) {
+        mutableStateOf(
+            if (totalDuePiasters > 0L) MoneyFormatter.formatEgpPlainInput(totalDuePiasters) else "0"
+        )
+    }
+    var userEditedPaid by remember(customer.id) { mutableStateOf(false) }
+    LaunchedEffect(totalDuePiasters) {
+        if (!userEditedPaid) {
+            paidInput = if (totalDuePiasters > 0L) MoneyFormatter.formatEgpPlainInput(totalDuePiasters) else "0"
+        }
+    }
+
+    var paymentMethod by remember { mutableStateOf(PaymentMethods.CASH) }
+    var notes by remember { mutableStateOf("") }
+    var errorMsg by remember { mutableStateOf<String?>(null) }
+    val idemKey = remember(customer.id) { UUID.randomUUID().toString() }
+
+    val parsedPaidPiasters = MoneyFormatter.parseEgpToPiasters(paidInput) ?: 0L
+    val discountPiasters = if (totalDuePiasters > 0L) {
+        (totalDuePiasters - parsedPaidPiasters).coerceAtLeast(0L)
+    } else 0L
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("تصفية حساب «${customer.name}»", fontWeight = FontWeight.Bold) },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(
+                        modifier = Modifier.padding(10.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text("الرصيد المسجل حاليًا:", style = MaterialTheme.typography.bodySmall)
+                            Text(
+                                MoneyFormatter.formatEgp(customer.currentBalancePiasters, currency),
+                                style = MaterialTheme.typography.bodySmall,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                        if (openDailyInvoices.isNotEmpty()) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text("سحب يومي مفتوح (${openDailyInvoices.size}):", style = MaterialTheme.typography.bodySmall)
+                                Text(
+                                    MoneyFormatter.formatEgp(openDailyRemaining, currency),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+                        HorizontalDivider(modifier = Modifier.padding(vertical = 2.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text("إجمالي المطلوب للتصفية:", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
+                            Text(
+                                MoneyFormatter.formatEgp(totalDuePiasters, currency),
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = if (totalDuePiasters > 0L) extras.danger else extras.success
+                            )
+                        }
+                    }
+                }
+
+                if (openDailyInvoices.isNotEmpty()) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Checkbox(
+                            checked = closeOpenDailies,
+                            onCheckedChange = { closeOpenDailies = it }
+                        )
+                        Text(
+                            text = "إغلاق فواتير السحب اليومي المفتوحة ضمن التصفية",
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                }
+
+                if (totalDuePiasters > 0L) {
+                    OutlinedTextField(
+                        value = paidInput,
+                        onValueChange = {
+                            paidInput = it
+                            userEditedPaid = true
+                            errorMsg = null
+                        },
+                        label = { Text("المبلغ المدفوع للتصفية ($currency)") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        singleLine = true,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("settle_paid_input")
+                    )
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        FilterChip(
+                            selected = parsedPaidPiasters == totalDuePiasters,
+                            onClick = {
+                                userEditedPaid = true
+                                paidInput = MoneyFormatter.formatEgpPlainInput(totalDuePiasters)
+                                errorMsg = null
+                            },
+                            label = { Text("سداد كامل") }
+                        )
+                        FilterChip(
+                            selected = parsedPaidPiasters == 0L && paidInput.isNotBlank(),
+                            onClick = {
+                                userEditedPaid = true
+                                paidInput = "0"
+                                errorMsg = null
+                            },
+                            label = { Text("إعفاء / خصم كامل") }
+                        )
+                    }
+
+                    if (discountPiasters > 0L && parsedPaidPiasters <= totalDuePiasters) {
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = extras.warningContainer,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(
+                                text = "سيتم تسجيل خصم / تسوية تصفية بقيمة ${MoneyFormatter.formatEgp(discountPiasters, currency)} ليصبح الرصيد 0.",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.SemiBold,
+                                color = extras.warning,
+                                modifier = Modifier.padding(8.dp)
+                            )
+                        }
+                    }
+
+                    if (parsedPaidPiasters > 0L) {
+                        Text("طريقة التحصيل:", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            listOf(
+                                PaymentMethods.CASH to "نقدي",
+                                PaymentMethods.EWALLET to "محفظة",
+                                PaymentMethods.BANK_TRANSFER to "بنك"
+                            ).forEach { (method, label) ->
+                                FilterChip(
+                                    selected = paymentMethod == method,
+                                    onClick = { paymentMethod = method },
+                                    label = { Text(label) }
+                                )
+                            }
+                        }
+                    }
+                } else if (totalDuePiasters < 0L) {
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = extras.successContainer,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            text = "العميل لديه رصيد دائن بقيمة ${MoneyFormatter.formatEgp(-totalDuePiasters, currency)} — سيتم تصفية الرصيد وإعادته إلى 0.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = extras.success,
+                            modifier = Modifier.padding(8.dp)
+                        )
+                    }
+                } else {
+                    Text(
+                        text = if (openDailyInvoices.isNotEmpty() && closeOpenDailies) {
+                            "سيتم إغلاق فاتورة السحب اليومي المفتوحة وتصفية الحساب (المتبقي 0)."
+                        } else {
+                            "الحساب خالص بالفعل (الرصيد 0)."
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = extras.success
+                    )
+                }
+
+                OutlinedTextField(
+                    value = notes,
+                    onValueChange = { notes = it },
+                    label = { Text("ملاحظات التصفية (اختياري)") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                errorMsg?.let {
+                    Text(it, style = MaterialTheme.typography.bodySmall, color = extras.danger)
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    val paid = if (totalDuePiasters > 0L) {
+                        val p = MoneyFormatter.parseEgpToPiasters(paidInput)
+                        if (p == null || p < 0L) {
+                            errorMsg = "يرجى إدخال مبلغ صحيح (0 أو أكثر)"
+                            return@Button
+                        }
+                        if (p > totalDuePiasters) {
+                            errorMsg = "المبلغ المدفوع يتجاوز إجمالي المستحق للتصفية"
+                            return@Button
+                        }
+                        p
+                    } else 0L
+                    onConfirm(paid, paymentMethod, closeOpenDailies, notes, idemKey)
+                },
+                enabled = totalDuePiasters != 0L || (closeOpenDailies && openDailyInvoices.isNotEmpty()),
+                modifier = Modifier.testTag("confirm_settle_customer_btn")
+            ) {
+                Text("تأكيد التصفية")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("إلغاء") }
+        }
+    )
 }

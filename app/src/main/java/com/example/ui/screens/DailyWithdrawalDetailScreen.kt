@@ -26,6 +26,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Inventory2
 import androidx.compose.material.icons.filled.Lock
@@ -109,7 +110,9 @@ fun DailyWithdrawalDetailScreen(
     var showPayDialog by remember { mutableStateOf(false) }
     var showCloseConfirm by remember { mutableStateOf(false) }
     var showReopenDialog by remember { mutableStateOf(false) }
+    var showDeleteInvoiceConfirm by remember { mutableStateOf(false) }
     var editingItem by remember { mutableStateOf<DailyWithdrawalItemEntity?>(null) }
+    var pendingDeleteItem by remember { mutableStateOf<DailyWithdrawalItemEntity?>(null) }
 
     val currentDaily = daily
     val customer = customers.firstOrNull { it.id == currentDaily?.customerId }
@@ -216,6 +219,12 @@ fun DailyWithdrawalDetailScreen(
                             modifier = Modifier.testTag("daily_whatsapp_btn")
                         ) {
                             Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "إرسال صورة الفاتورة عبر WhatsApp", tint = extras.success)
+                        }
+                        IconButton(
+                            onClick = { showDeleteInvoiceConfirm = true },
+                            modifier = Modifier.testTag("daily_delete_invoice_btn")
+                        ) {
+                            Icon(Icons.Default.Delete, contentDescription = "حذف الفاتورة اليومية", tint = extras.danger)
                         }
                     }
                 }
@@ -395,8 +404,26 @@ fun DailyWithdrawalDetailScreen(
                                     color = MaterialTheme.colorScheme.primary
                                 )
                                 if (isOpen) {
-                                    IconButton(onClick = { editingItem = item }) {
-                                        Icon(Icons.Default.Edit, contentDescription = "تعديل السحبة", modifier = Modifier.size(18.dp))
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        IconButton(
+                                            onClick = { editingItem = item },
+                                            modifier = Modifier.size(48.dp)
+                                        ) {
+                                            Icon(Icons.Default.Edit, contentDescription = "تعديل السحبة", modifier = Modifier.size(18.dp))
+                                        }
+                                        IconButton(
+                                            onClick = { pendingDeleteItem = item },
+                                            modifier = Modifier
+                                                .size(48.dp)
+                                                .testTag("delete_daily_item_${item.id}")
+                                        ) {
+                                            Icon(
+                                                Icons.Default.Delete,
+                                                contentDescription = "حذف السحبة",
+                                                tint = extras.danger,
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                        }
                                     }
                                 }
                             }
@@ -501,6 +528,53 @@ fun DailyWithdrawalDetailScreen(
             },
             dismissButton = {
                 TextButton(onClick = { showReopenDialog = false }) { Text("إلغاء") }
+            }
+        )
+    }
+
+    pendingDeleteItem?.let { itemTarget ->
+        AlertDialog(
+            onDismissRequest = { pendingDeleteItem = null },
+            title = { Text("حذف السحبة", fontWeight = FontWeight.Bold) },
+            text = {
+                Text("هل تريد حذف سحبة \"${itemTarget.description}\" بقيمة ${MoneyFormatter.formatEgp(itemTarget.lineTotalPiasters, currency)}؟")
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val iid = itemTarget.id
+                        pendingDeleteItem = null
+                        viewModel.deleteDailyWithdrawalItem(dailyInvoiceId, iid)
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = extras.danger)
+                ) { Text("حذف") }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingDeleteItem = null }) { Text("إلغاء") }
+            }
+        )
+    }
+
+    if (showDeleteInvoiceConfirm) {
+        AlertDialog(
+            onDismissRequest = { showDeleteInvoiceConfirm = false },
+            title = { Text("حذف الفاتورة اليومية", fontWeight = FontWeight.Bold) },
+            text = {
+                Text("هل تريد حذف هذه الفاتورة اليومية بالكامل (${items.size} سحبة بقيمة ${MoneyFormatter.formatEgp(currentDaily?.totalPiasters ?: 0L, currency)})؟ سيتم تحديث رصيد العميل تلقائيًا.")
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showDeleteInvoiceConfirm = false
+                        viewModel.deleteDailyInvoice(dailyInvoiceId) { ok, _ ->
+                            if (ok) onBack()
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = extras.danger)
+                ) { Text("حذف الفاتورة") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteInvoiceConfirm = false }) { Text("إلغاء") }
             }
         )
     }

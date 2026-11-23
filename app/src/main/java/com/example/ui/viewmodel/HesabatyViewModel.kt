@@ -896,6 +896,124 @@ class HesabatyViewModel(private val container: AppContainer) : ViewModel() {
         }
     }
 
+    fun mergeCustomers(
+        sourceCustomerId: String,
+        targetCustomerId: String,
+        onDone: (Boolean, String) -> Unit = { _, _ -> }
+    ) {
+        val (tid, actor) = requireShopActor() ?: return
+        viewModelScope.launch {
+            _isBusy.value = true
+            try {
+                when (val res = accRepo.mergeCustomers(tid, actor, sourceCustomerId, targetCustomerId)) {
+                    is RepoResult.Error -> {
+                        emitMessage(res.message, true)
+                        onDone(false, res.message)
+                    }
+                    is RepoResult.Success -> {
+                        emitMessage("تم دمج حساب العميل بنجاح في \"${res.data.name}\"")
+                        onDone(true, res.data.id)
+                    }
+                }
+            } finally {
+                _isBusy.value = false
+            }
+        }
+    }
+
+    fun mergeDuplicateSameNameCustomers() {
+        val (tid, actor) = requireShopActor() ?: return
+        viewModelScope.launch {
+            _isBusy.value = true
+            try {
+                when (val res = accRepo.mergeDuplicateSameNameCustomers(tid, actor)) {
+                    is RepoResult.Error -> emitMessage(res.message, true)
+                    is RepoResult.Success -> {
+                        val msg = if (res.data > 0) {
+                            "تم دمج ${res.data} حساب مكرر وتوحيد الفواتير المفتوحة"
+                        } else {
+                            "لا توجد حسابات عملاء مكررة بنفس الاسم"
+                        }
+                        emitMessage(msg)
+                    }
+                }
+            } finally {
+                _isBusy.value = false
+            }
+        }
+    }
+
+    fun deleteCustomer(
+        customerId: String,
+        onDone: (Boolean, String) -> Unit = { _, _ -> }
+    ) {
+        val (tid, actor) = requireShopActor() ?: return
+        viewModelScope.launch {
+            _isBusy.value = true
+            try {
+                when (val res = accRepo.deleteCustomer(tid, actor, customerId)) {
+                    is RepoResult.Error -> {
+                        emitMessage(res.message, true)
+                        onDone(false, res.message)
+                    }
+                    is RepoResult.Success -> {
+                        emitMessage("تم حذف العميل ومعاملاته بنجاح")
+                        onDone(true, "تم حذف العميل")
+                    }
+                }
+            } finally {
+                _isBusy.value = false
+            }
+        }
+    }
+
+    fun settleCustomerAccount(
+        customerId: String,
+        paidAmountPiasters: Long,
+        paymentMethod: String,
+        closeOpenDailyInvoices: Boolean = true,
+        notes: String = "",
+        idempotencyKey: String = UUID.randomUUID().toString(),
+        onDone: (Boolean, String) -> Unit = { _, _ -> }
+    ) {
+        val (tid, actor) = requireShopActor() ?: return
+        viewModelScope.launch {
+            _isBusy.value = true
+            try {
+                when (
+                    val res = accRepo.settleCustomerAccount(
+                        tenantId = tid,
+                        actor = actor,
+                        customerId = customerId,
+                        paidAmountPiasters = paidAmountPiasters,
+                        paymentMethod = paymentMethod,
+                        closeOpenDailyInvoices = closeOpenDailyInvoices,
+                        notes = notes,
+                        idempotencyKey = idempotencyKey
+                    )
+                ) {
+                    is RepoResult.Error -> {
+                        emitMessage(res.message, true)
+                        onDone(false, res.message)
+                    }
+                    is RepoResult.Success -> {
+                        val s = res.data
+                        val msg = buildString {
+                            append("تمت تصفية حساب العميل بالكامل (الرصيد 0)")
+                            if (s.discountPiasters > 0L) {
+                                append(" • خصم تصفية ${com.example.core.MoneyFormatter.formatEgp(s.discountPiasters)}")
+                            }
+                        }
+                        emitMessage(msg)
+                        onDone(true, msg)
+                    }
+                }
+            } finally {
+                _isBusy.value = false
+            }
+        }
+    }
+
     fun addSupplier(
         name: String,
         phone: String,
@@ -1064,11 +1182,19 @@ class HesabatyViewModel(private val container: AppContainer) : ViewModel() {
     // Daily Withdrawals
     fun createDailyInvoice(customerId: String, onCreated: (String) -> Unit) {
         val (tid, actor) = requireShopActor() ?: return
+        val hadOpenBefore = dailyInvoices.value.any {
+            it.customerId == customerId && it.status == com.example.data.local.DailyInvoiceStatuses.OPEN
+        }
         viewModelScope.launch {
             when (val res = accRepo.createDailyWithdrawalInvoice(tid, actor, customerId)) {
                 is RepoResult.Error -> emitMessage(res.message, true)
                 is RepoResult.Success -> {
-                    emitMessage("تم فتح فاتورة سحب يومي ${res.data.invoiceNumber}")
+                    val msg = if (hadOpenBefore) {
+                        "تم فتح الفاتورة اليومية المتصلة ${res.data.invoiceNumber}"
+                    } else {
+                        "تم فتح فاتورة سحب يومي ${res.data.invoiceNumber}"
+                    }
+                    emitMessage(msg)
                     onCreated(res.data.id)
                 }
             }
@@ -1350,6 +1476,61 @@ class HesabatyViewModel(private val container: AppContainer) : ViewModel() {
                 is RepoResult.Success -> {
                     emitMessage("تم إعادة فتح الفاتورة اليومية وتسجيل السبب")
                     onDone(true, "تمت إعادة الفتح")
+                }
+            }
+        }
+    }
+
+    fun deleteDailyWithdrawalItem(
+        dailyInvoiceId: String,
+        itemId: String,
+        onDone: (Boolean, String) -> Unit = { _, _ -> }
+    ) {
+        val (tid, actor) = requireShopActor() ?: return
+        viewModelScope.launch {
+            when (val res = accRepo.deleteDailyWithdrawalItem(tid, actor, dailyInvoiceId, itemId)) {
+                is RepoResult.Error -> {
+                    emitMessage(res.message, true)
+                    onDone(false, res.message)
+                }
+                is RepoResult.Success -> {
+                    emitMessage("تم حذف السحبة بنجاح")
+                    onDone(true, "")
+                }
+            }
+        }
+    }
+
+    fun deleteDailyInvoice(
+        dailyInvoiceId: String,
+        onDone: (Boolean, String) -> Unit = { _, _ -> }
+    ) {
+        val (tid, actor) = requireShopActor() ?: return
+        viewModelScope.launch {
+            when (val res = accRepo.deleteDailyWithdrawalInvoice(tid, actor, dailyInvoiceId)) {
+                is RepoResult.Error -> {
+                    emitMessage(res.message, true)
+                    onDone(false, res.message)
+                }
+                is RepoResult.Success -> {
+                    emitMessage("تم حذف الفاتورة اليومية بنجاح")
+                    onDone(true, "")
+                }
+            }
+        }
+    }
+
+    fun mergeDuplicateOpenDailyInvoices() {
+        val (tid, actor) = requireShopActor() ?: return
+        viewModelScope.launch {
+            when (val res = accRepo.mergeDuplicateOpenDailyInvoices(tid, actor)) {
+                is RepoResult.Error -> emitMessage(res.message, true)
+                is RepoResult.Success -> {
+                    if (res.data > 0) {
+                        emitMessage("تم دمج ${res.data} فاتورة مكررة في فواتير متصلة")
+                    } else {
+                        emitMessage("لا توجد فواتير مكررة بحاجة للدمج")
+                    }
                 }
             }
         }

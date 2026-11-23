@@ -15,9 +15,14 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.DoneAll
 import androidx.compose.material.icons.filled.Groups
+import androidx.compose.material.icons.filled.Merge
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -25,6 +30,7 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
@@ -44,6 +50,8 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.core.MoneyFormatter
 import com.example.data.local.CustomerAccountStatus
+import com.example.data.local.CustomerEntity
+import com.example.data.local.DailyInvoiceStatuses
 import com.example.ui.components.ContactPickerButton
 import com.example.ui.components.EmptyStateView
 import com.example.ui.components.HesabatyCard
@@ -60,6 +68,12 @@ fun CustomersScreen(
     onOpenCustomer: (String) -> Unit
 ) {
     val customers by viewModel.customers.collectAsStateWithLifecycle()
+    val allDailyInvoices by viewModel.dailyInvoices.collectAsStateWithLifecycle()
+    val openDailiesByCustomer = remember(allDailyInvoices) {
+        allDailyInvoices
+            .filter { it.status == DailyInvoiceStatuses.OPEN }
+            .groupBy { it.customerId }
+    }
     val creditLimitBreaches by viewModel.creditLimitBreaches.collectAsStateWithLifecycle()
     val settings by viewModel.appSettings.collectAsStateWithLifecycle()
     val currency = settings?.defaultCurrencyLabel ?: "ج.م"
@@ -71,6 +85,7 @@ fun CustomersScreen(
     var searchQuery by rememberSaveable { mutableStateOf("") }
     var statusFilter by rememberSaveable { mutableStateOf("ALL") }
     var showAddDialog by remember { mutableStateOf(false) }
+    var settlingCustomer by remember { mutableStateOf<CustomerEntity?>(null) }
 
     val filtered = remember(customers, searchQuery, statusFilter, breachByCustomerId) {
         val q = searchQuery.trim().lowercase()
@@ -83,6 +98,11 @@ fun CustomersScreen(
             }
             matchQ && matchS
         }
+    }
+
+    val duplicateNameGroups = remember(customers) {
+        customers.groupBy { it.name.trim().lowercase() }
+            .filter { it.key.isNotEmpty() && it.value.size > 1 }
     }
 
     val extras = HesabatyThemeExtras.colors
@@ -162,6 +182,36 @@ fun CustomersScreen(
                     contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 88.dp, top = 4.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
+                    if (duplicateNameGroups.isNotEmpty()) {
+                        item {
+                            val sampleName = duplicateNameGroups.values.firstOrNull()?.firstOrNull()?.name ?: ""
+                            HesabatyCard(
+                                containerColor = extras.warningContainer,
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Text(
+                                        text = "يوجد عملاء مكررون بنفس الاسم (مثل \"$sampleName\"). يمكنك دمجهم في حساب واحد الآن.",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                    Button(
+                                        onClick = { viewModel.mergeDuplicateSameNameCustomers() },
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .heightIn(min = 48.dp)
+                                            .testTag("merge_duplicate_customers_btn")
+                                    ) {
+                                        Icon(Icons.Default.Merge, contentDescription = null, modifier = Modifier.size(18.dp))
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Text("دمج العملاء المكررين في حساب واحد", fontWeight = FontWeight.Bold)
+                                    }
+                                }
+                            }
+                        }
+                    }
+
                     items(filtered, key = { it.id }) { customer ->
                         val breach = breachByCustomerId[customer.id]
                         val effectiveLimit = if (customer.creditLimitPiasters > 0L) customer.creditLimitPiasters else shopDefaultLimit
@@ -251,6 +301,21 @@ fun CustomersScreen(
                                     modifier = Modifier.weight(1f)
                                 )
                             }
+                            val custOpenDailies = openDailiesByCustomer[customer.id].orEmpty()
+                            if (customer.currentBalancePiasters != 0L || custOpenDailies.isNotEmpty()) {
+                                Spacer(modifier = Modifier.height(8.dp))
+                                OutlinedButton(
+                                    onClick = { settlingCustomer = customer },
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .heightIn(min = 48.dp)
+                                        .testTag("settle_customer_card_${customer.id}")
+                                ) {
+                                    Icon(Icons.Default.DoneAll, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text("تصفية الحساب", fontWeight = FontWeight.Bold)
+                                }
+                            }
                         }
                     }
                 }
@@ -258,8 +323,30 @@ fun CustomersScreen(
         }
     }
 
+    settlingCustomer?.let { target ->
+        SettleCustomerDialog(
+            customer = target,
+            openDailyInvoices = openDailiesByCustomer[target.id].orEmpty(),
+            currency = currency,
+            onDismiss = { settlingCustomer = null },
+            onConfirm = { paidPiasters, method, closeOpenDailies, notes, idemKey ->
+                viewModel.settleCustomerAccount(
+                    customerId = target.id,
+                    paidAmountPiasters = paidPiasters,
+                    paymentMethod = method,
+                    closeOpenDailyInvoices = closeOpenDailies,
+                    notes = notes,
+                    idempotencyKey = idemKey
+                ) { ok, _ ->
+                    if (ok) settlingCustomer = null
+                }
+            }
+        )
+    }
+
     if (showAddDialog) {
         AddCustomerDialog(
+            existingCustomers = customers,
             onDismiss = { showAddDialog = false },
             onSave = { name, phone, wa, address, notes, openingPiasters, creditLimitPiasters, onErr ->
                 viewModel.addCustomer(name, phone, wa, address, notes, openingPiasters, creditLimitPiasters) { ok, msg ->
@@ -272,6 +359,7 @@ fun CustomersScreen(
 
 @Composable
 fun AddCustomerDialog(
+    existingCustomers: List<CustomerEntity> = emptyList(),
     onDismiss: () -> Unit,
     onSave: (String, String, String, String, String, Long, Long, (String) -> Unit) -> Unit
 ) {
@@ -309,6 +397,19 @@ fun AddCustomerDialog(
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth().testTag("customer_name_input")
                 )
+                val matchingExisting = remember(name, existingCustomers) {
+                    val clean = name.trim().lowercase()
+                    if (clean.isEmpty()) null
+                    else existingCustomers.firstOrNull { it.name.trim().lowercase() == clean }
+                }
+                if (matchingExisting != null) {
+                    Text(
+                        text = "تنبيه: يوجد عميل مسجل بالفعل باسم «${matchingExisting.name}». إذا كان نفس الشخص استخدم حسابه الحالي بدلاً من إنشاء حساب مكرر.",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.error,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
                 OutlinedTextField(
                     value = phone,
                     onValueChange = { phone = it },

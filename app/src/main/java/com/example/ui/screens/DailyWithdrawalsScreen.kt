@@ -18,10 +18,13 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ReceiptLong
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Merge
 import androidx.compose.material.icons.filled.PersonAdd
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -50,6 +53,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.core.EgyptTime
 import com.example.core.MoneyFormatter
 import com.example.data.local.DailyInvoiceStatuses
+import com.example.data.local.DailyWithdrawalInvoiceEntity
 import com.example.ui.components.EmptyStateView
 import com.example.ui.components.HesabatyCard
 import com.example.ui.components.HesabatyTopBar
@@ -73,9 +77,14 @@ fun DailyWithdrawalsScreen(
     var selectedTab by rememberSaveable { mutableIntStateOf(0) }
     var showPickCustomerDialog by remember { mutableStateOf(false) }
     var showAddCustomerDialog by remember { mutableStateOf(false) }
+    var pendingDeleteInvoice by remember { mutableStateOf<DailyWithdrawalInvoiceEntity?>(null) }
 
     val openList = remember(dailyInvoices) { dailyInvoices.filter { it.status == DailyInvoiceStatuses.OPEN } }
     val closedList = remember(dailyInvoices) { dailyInvoices.filter { it.status == DailyInvoiceStatuses.CLOSED } }
+    val openByCustomer = remember(openList) { openList.associateBy { it.customerId } }
+    val hasDuplicateOpenForCustomer = remember(openList) {
+        openList.groupBy { it.customerId }.any { it.value.size > 1 }
+    }
     val shown = if (selectedTab == 0) openList else closedList
     val extras = HesabatyThemeExtras.colors
 
@@ -122,6 +131,35 @@ fun DailyWithdrawalsScreen(
                     contentPadding = PaddingValues(16.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
+                    if (selectedTab == 0 && hasDuplicateOpenForCustomer) {
+                        item {
+                            HesabatyCard(
+                                containerColor = extras.warningContainer,
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Text(
+                                        text = "يوجد عميل لديه أكثر من فاتورة سحب يومي مفتوحة. يمكنك دمجها في فاتورة واحدة متصلة أو حذف المضاف بالخطأ.",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                    Button(
+                                        onClick = { viewModel.mergeDuplicateOpenDailyInvoices() },
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .heightIn(min = 48.dp)
+                                            .testTag("merge_duplicate_daily_btn")
+                                    ) {
+                                        Icon(Icons.Default.Merge, contentDescription = null, modifier = Modifier.size(18.dp))
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Text("دمج الفواتير المتصلة لنفس العميل", fontWeight = FontWeight.Bold)
+                                    }
+                                }
+                            }
+                        }
+                    }
+
                     items(shown, key = { it.id }) { daily ->
                         val cname = customerMap[daily.customerId]?.name ?: "عميل"
                         val isOpen = daily.status == DailyInvoiceStatuses.OPEN
@@ -142,11 +180,28 @@ fun DailyWithdrawalsScreen(
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
                                 }
-                                StatusBadge(
-                                    label = if (isOpen) "مفتوحة" else "مغلقة",
-                                    textColor = if (isOpen) extras.warning else extras.success,
-                                    backgroundColor = if (isOpen) extras.warningContainer else extras.successContainer
-                                )
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(2.dp)
+                                ) {
+                                    StatusBadge(
+                                        label = if (isOpen) "مفتوحة" else "مغلقة",
+                                        textColor = if (isOpen) extras.warning else extras.success,
+                                        backgroundColor = if (isOpen) extras.warningContainer else extras.successContainer
+                                    )
+                                    IconButton(
+                                        onClick = { pendingDeleteInvoice = daily },
+                                        modifier = Modifier
+                                            .size(48.dp)
+                                            .testTag("delete_daily_invoice_${daily.id}")
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Delete,
+                                            contentDescription = "حذف الفاتورة اليومية",
+                                            tint = extras.danger
+                                        )
+                                    }
+                                }
                             }
                             Spacer(modifier = Modifier.height(10.dp))
                             Row(
@@ -258,7 +313,15 @@ fun DailyWithdrawalsScreen(
                                         ) {
                                             Column(modifier = Modifier.weight(1f)) {
                                                 Text(c.name, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
-                                                if (c.phone.isNotBlank()) {
+                                                val existingOpen = openByCustomer[c.id]
+                                                if (existingOpen != null) {
+                                                    Text(
+                                                        text = "فاتورة متصلة مفتوحة (${existingOpen.invoiceNumber})",
+                                                        style = MaterialTheme.typography.labelSmall,
+                                                        color = extras.success,
+                                                        fontWeight = FontWeight.SemiBold
+                                                    )
+                                                } else if (c.phone.isNotBlank()) {
                                                     Text(c.phone, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                                 }
                                             }
@@ -282,9 +345,40 @@ fun DailyWithdrawalsScreen(
         )
     }
 
+    pendingDeleteInvoice?.let { target ->
+        val cname = customerMap[target.customerId]?.name ?: "عميل"
+        AlertDialog(
+            onDismissRequest = { pendingDeleteInvoice = null },
+            title = { Text("حذف الفاتورة اليومية", fontWeight = FontWeight.Bold) },
+            text = {
+                Text(
+                    "هل تريد حذف فاتورة ${target.invoiceNumber} للعميل \"$cname\" (${target.withdrawalsCount} سحبة بقيمة ${MoneyFormatter.formatEgp(target.totalPiasters, currency)})؟ سيتم حذفها نهائيًا وتحديث حساب العميل."
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val id = target.id
+                        pendingDeleteInvoice = null
+                        viewModel.deleteDailyInvoice(id)
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = extras.danger)
+                ) {
+                    Text("حذف")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingDeleteInvoice = null }) {
+                    Text("إلغاء")
+                }
+            }
+        )
+    }
+
     if (showAddCustomerDialog) {
         AddCustomerDialog(
             onDismiss = { showAddCustomerDialog = false },
+            existingCustomers = customers,
             onSave = { name, phone, wa, addr, cNotes, opening, creditLimit, onErr ->
                 viewModel.addCustomer(name, phone, wa, addr, cNotes, opening, creditLimit) { ok, customerIdOrErr ->
                     if (ok) {
