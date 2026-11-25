@@ -904,9 +904,10 @@ fun NewSaleScreen(
         ProductPickerDialog(
             products = products,
             currency = currency,
+            showPriceTierSelector = true,
             onDismiss = { showProductPicker = false },
-            onSelect = { prod ->
-                val priceStr = if (prod.salePricePiasters > 0L) MoneyFormatter.formatEgpPlainInput(prod.salePricePiasters) else ""
+            onSelectWithPrice = { prod, pickedPrice ->
+                val priceStr = if (pickedPrice > 0L) MoneyFormatter.formatEgpPlainInput(pickedPrice) else ""
                 val pickedUnit = prod.unitLabel.ifBlank { "قطعة" }
                 val defaultSub = UnitMeasurement.subUnitsFor(pickedUnit).first().label
                 val emptyIndex = lineRows.indexOfFirst { it.description.isBlank() && it.unitPriceText.isBlank() }
@@ -946,8 +947,21 @@ fun NewSaleScreen(
             initial = null,
             currency = currency,
             onDismiss = { showQuickAddProductDialog = false },
-            onSave = { name, cat, sku, unit, saleP, buyP, stockM, track, minM, pNotes, onErr ->
-                viewModel.addProduct(name, cat, sku, unit, saleP, buyP, stockM, track, minM, pNotes) { ok, newIdOrErr ->
+            onSave = { name, cat, sku, unit, saleP, halfWholesaleP, wholesaleP, buyP, stockM, track, minM, pNotes, onErr ->
+                viewModel.addProduct(
+                    name = name,
+                    category = cat,
+                    skuOrBarcode = sku,
+                    unitLabel = unit,
+                    salePricePiasters = saleP,
+                    purchasePricePiasters = buyP,
+                    stockQuantityMilli = stockM,
+                    trackStock = track,
+                    minStockAlertMilli = minM,
+                    notes = pNotes,
+                    halfWholesalePricePiasters = halfWholesaleP,
+                    wholesalePricePiasters = wholesaleP
+                ) { ok, newIdOrErr ->
                     if (ok) {
                         val priceStr = if (saleP > 0L) MoneyFormatter.formatEgpPlainInput(saleP) else ""
                         val pickedUnit = unit.ifBlank { "قطعة" }

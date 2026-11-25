@@ -98,6 +98,7 @@ import com.example.core.UnitMeasureCategory
 import com.example.core.UnitMeasurement
 import com.example.core.WhatsAppHelper
 import com.example.data.local.ProductEntity
+import com.example.data.local.SalePriceTier
 import com.example.ui.components.EmptyStateView
 import com.example.ui.components.HesabatyCard
 import com.example.ui.components.HesabatyTopBar
@@ -177,13 +178,14 @@ fun ProductsScreen(
             shopName = tenant?.shopName ?: "حساباتي",
             periodLabel = today,
             summaryPairs = summaryPairs,
-            columns = listOf("الصنف", "الوحدة", "سعر البيع", "التصنيف"),
+            columns = listOf("الصنف", "الوحدة", "قطاعي", "1/2 جملة", "جملة"),
             rows = listToShare.map { p ->
                 listOf(
                     p.name,
                     p.unitLabel,
                     MoneyFormatter.formatEgp(p.salePricePiasters, currency),
-                    p.category.ifBlank { "عام" }
+                    if (p.halfWholesalePricePiasters > 0L) MoneyFormatter.formatEgp(p.halfWholesalePricePiasters, currency) else "—",
+                    if (p.wholesalePricePiasters > 0L) MoneyFormatter.formatEgp(p.wholesalePricePiasters, currency) else "—"
                 )
             }
         )
@@ -378,13 +380,47 @@ fun ProductsScreen(
                                     fontWeight = FontWeight.ExtraBold,
                                     color = MaterialTheme.colorScheme.primary
                                 )
-                                if (product.purchasePricePiasters > 0L) {
-                                    Text(
-                                        text = "التكلفة: ${MoneyFormatter.formatEgp(product.purchasePricePiasters, currency)}",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
+                                Text(
+                                    text = "سعر القطاعي",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+
+                        if (product.purchasePricePiasters > 0L ||
+                            product.halfWholesalePricePiasters > 0L ||
+                            product.wholesalePricePiasters > 0L
+                        ) {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                SummaryStatPill(
+                                    label = "الشراء",
+                                    value = if (product.purchasePricePiasters > 0L) MoneyFormatter.formatEgp(product.purchasePricePiasters, currency) else "—",
+                                    valueColor = MaterialTheme.colorScheme.onSurface,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                SummaryStatPill(
+                                    label = "الجملة",
+                                    value = if (product.wholesalePricePiasters > 0L) MoneyFormatter.formatEgp(product.wholesalePricePiasters, currency) else "—",
+                                    valueColor = extras.success,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                SummaryStatPill(
+                                    label = "1/2 جملة",
+                                    value = if (product.halfWholesalePricePiasters > 0L) MoneyFormatter.formatEgp(product.halfWholesalePricePiasters, currency) else "—",
+                                    valueColor = PrimaryBlue,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                SummaryStatPill(
+                                    label = "القطاعي",
+                                    value = MoneyFormatter.formatEgp(product.salePricePiasters, currency),
+                                    valueColor = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.weight(1f)
+                                )
                             }
                         }
 
@@ -471,8 +507,21 @@ fun ProductsScreen(
             initial = null,
             currency = currency,
             onDismiss = { showAddDialog = false },
-            onSave = { name, cat, sku, unit, saleP, buyP, stockM, track, minM, notes, onErr ->
-                viewModel.addProduct(name, cat, sku, unit, saleP, buyP, stockM, track, minM, notes) { ok, msg ->
+            onSave = { name, cat, sku, unit, saleP, halfWholesaleP, wholesaleP, buyP, stockM, track, minM, notes, onErr ->
+                viewModel.addProduct(
+                    name = name,
+                    category = cat,
+                    skuOrBarcode = sku,
+                    unitLabel = unit,
+                    salePricePiasters = saleP,
+                    purchasePricePiasters = buyP,
+                    stockQuantityMilli = stockM,
+                    trackStock = track,
+                    minStockAlertMilli = minM,
+                    notes = notes,
+                    halfWholesalePricePiasters = halfWholesaleP,
+                    wholesalePricePiasters = wholesaleP
+                ) { ok, msg ->
                     if (ok) showAddDialog = false else onErr(msg)
                 }
             }
@@ -484,8 +533,22 @@ fun ProductsScreen(
             initial = prod,
             currency = currency,
             onDismiss = { editingProduct = null },
-            onSave = { name, cat, sku, unit, saleP, buyP, stockM, track, minM, notes, onErr ->
-                viewModel.updateProduct(prod.id, name, cat, sku, unit, saleP, buyP, stockM, track, minM, notes) { ok, msg ->
+            onSave = { name, cat, sku, unit, saleP, halfWholesaleP, wholesaleP, buyP, stockM, track, minM, notes, onErr ->
+                viewModel.updateProduct(
+                    productId = prod.id,
+                    name = name,
+                    category = cat,
+                    skuOrBarcode = sku,
+                    unitLabel = unit,
+                    salePricePiasters = saleP,
+                    purchasePricePiasters = buyP,
+                    stockQuantityMilli = stockM,
+                    trackStock = track,
+                    minStockAlertMilli = minM,
+                    notes = notes,
+                    halfWholesalePricePiasters = halfWholesaleP,
+                    wholesalePricePiasters = wholesaleP
+                ) { ok, msg ->
                     if (ok) editingProduct = null else onErr(msg)
                 }
             }
@@ -539,6 +602,8 @@ fun ProductFormDialog(
         skuOrBarcode: String,
         unitLabel: String,
         salePricePiasters: Long,
+        halfWholesalePricePiasters: Long,
+        wholesalePricePiasters: Long,
         purchasePricePiasters: Long,
         stockQuantityMilli: Long,
         trackStock: Boolean,
@@ -567,6 +632,16 @@ fun ProductFormDialog(
             if (initial != null && initial.salePricePiasters > 0L) MoneyFormatter.formatEgpPlainInput(initial.salePricePiasters) else ""
         )
     }
+    var halfWholesalePriceText by remember {
+        mutableStateOf(
+            if (initial != null && initial.halfWholesalePricePiasters > 0L) MoneyFormatter.formatEgpPlainInput(initial.halfWholesalePricePiasters) else ""
+        )
+    }
+    var wholesalePriceText by remember {
+        mutableStateOf(
+            if (initial != null && initial.wholesalePricePiasters > 0L) MoneyFormatter.formatEgpPlainInput(initial.wholesalePricePiasters) else ""
+        )
+    }
     var purchasePriceText by remember {
         mutableStateOf(
             if (initial != null && initial.purchasePricePiasters > 0L) MoneyFormatter.formatEgpPlainInput(initial.purchasePricePiasters) else ""
@@ -589,6 +664,8 @@ fun ProductFormDialog(
     val extras = HesabatyThemeExtras.colors
     val uiScale = HesabatyThemeExtras.uiScale
     val parsedSalePreview = remember(salePriceText) { MoneyFormatter.parseEgpToPiasters(salePriceText) ?: 0L }
+    val parsedHalfWholesalePreview = remember(halfWholesalePriceText) { MoneyFormatter.parseEgpToPiasters(halfWholesalePriceText) ?: 0L }
+    val parsedWholesalePreview = remember(wholesalePriceText) { MoneyFormatter.parseEgpToPiasters(wholesalePriceText) ?: 0L }
     val parsedBuyPreview = remember(purchasePriceText) { MoneyFormatter.parseEgpToPiasters(purchasePriceText) ?: 0L }
     val previewExamples = remember(unitLabel, parsedSalePreview, currency) {
         UnitMeasurement.buildProductUnitPreview(unitLabel, parsedSalePreview, currency)
@@ -905,21 +982,8 @@ fun ProductFormDialog(
                                 )
                             }
 
-                            // Price Inputs labeled dynamically with selected unit
+                            // 2x2 Price Tiers: Purchase + Retail (قطاعي) + Half-Wholesale (1/2 الجملة) + Wholesale (الجملة)
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                OutlinedTextField(
-                                    value = salePriceText,
-                                    onValueChange = { salePriceText = it; err = null },
-                                    label = { Text("سعر البيع ($cleanUnit) *") },
-                                    suffix = { Text(currency, style = MaterialTheme.typography.labelSmall) },
-                                    singleLine = true,
-                                    shape = RoundedCornerShape(14.dp),
-                                    colors = fieldColors,
-                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .testTag("product_form_sale_price")
-                                )
                                 OutlinedTextField(
                                     value = purchasePriceText,
                                     onValueChange = { purchasePriceText = it; err = null },
@@ -932,6 +996,48 @@ fun ProductFormDialog(
                                     modifier = Modifier
                                         .weight(1f)
                                         .testTag("product_form_purchase_price")
+                                )
+                                OutlinedTextField(
+                                    value = salePriceText,
+                                    onValueChange = { salePriceText = it; err = null },
+                                    label = { Text("البيع قطاعي ($cleanUnit) *") },
+                                    suffix = { Text(currency, style = MaterialTheme.typography.labelSmall) },
+                                    singleLine = true,
+                                    shape = RoundedCornerShape(14.dp),
+                                    colors = fieldColors,
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .testTag("product_form_sale_price")
+                                )
+                            }
+
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                OutlinedTextField(
+                                    value = halfWholesalePriceText,
+                                    onValueChange = { halfWholesalePriceText = it; err = null },
+                                    label = { Text("1/2 الجملة ($cleanUnit)") },
+                                    suffix = { Text(currency, style = MaterialTheme.typography.labelSmall) },
+                                    singleLine = true,
+                                    shape = RoundedCornerShape(14.dp),
+                                    colors = fieldColors,
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .testTag("product_form_half_wholesale_price")
+                                )
+                                OutlinedTextField(
+                                    value = wholesalePriceText,
+                                    onValueChange = { wholesalePriceText = it; err = null },
+                                    label = { Text("سعر الجملة ($cleanUnit)") },
+                                    suffix = { Text(currency, style = MaterialTheme.typography.labelSmall) },
+                                    singleLine = true,
+                                    shape = RoundedCornerShape(14.dp),
+                                    colors = fieldColors,
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .testTag("product_form_wholesale_price")
                                 )
                             }
 
@@ -993,12 +1099,18 @@ fun ProductFormDialog(
                                             }
                                         }
                                         if (parsedBuyPreview > 0L) {
-                                            val profit = parsedSalePreview - parsedBuyPreview
+                                            val retailProfit = parsedSalePreview - parsedBuyPreview
+                                            val halfProfitText = if (parsedHalfWholesalePreview > 0L) {
+                                                " • 1/2 جملة: ${MoneyFormatter.formatEgp(parsedHalfWholesalePreview - parsedBuyPreview, currency)}"
+                                            } else ""
+                                            val wholeProfitText = if (parsedWholesalePreview > 0L) {
+                                                " • جملة: ${MoneyFormatter.formatEgp(parsedWholesalePreview - parsedBuyPreview, currency)}"
+                                            } else ""
                                             Text(
-                                                text = "صافي الربح لكل $cleanUnit: ${MoneyFormatter.formatEgp(profit, currency)}",
+                                                text = "ربح القطاعي: ${MoneyFormatter.formatEgp(retailProfit, currency)}$halfProfitText$wholeProfitText",
                                                 style = MaterialTheme.typography.labelSmall,
                                                 fontWeight = FontWeight.Bold,
-                                                color = if (profit >= 0L) extras.success else extras.danger
+                                                color = if (retailProfit >= 0L) extras.success else extras.danger
                                             )
                                         }
                                     }
@@ -1158,7 +1270,17 @@ fun ProductFormDialog(
                         onClick = {
                             val saleP = if (salePriceText.isBlank()) 0L else MoneyFormatter.parseEgpToPiasters(salePriceText)
                             if (saleP == null || saleP < 0L) {
-                                err = "أدخل سعر بيع صحيحًا"
+                                err = "أدخل سعر البيع قطاعي صحيحًا"
+                                return@Button
+                            }
+                            val halfWholesaleP = if (halfWholesalePriceText.isBlank()) 0L else (MoneyFormatter.parseEgpToPiasters(halfWholesalePriceText) ?: -1L)
+                            if (halfWholesaleP < 0L) {
+                                err = "أدخل سعر 1/2 الجملة صحيحًا"
+                                return@Button
+                            }
+                            val wholesaleP = if (wholesalePriceText.isBlank()) 0L else (MoneyFormatter.parseEgpToPiasters(wholesalePriceText) ?: -1L)
+                            if (wholesaleP < 0L) {
+                                err = "أدخل سعر الجملة صحيحًا"
                                 return@Button
                             }
                             val buyP = if (purchasePriceText.isBlank()) 0L else (MoneyFormatter.parseEgpToPiasters(purchasePriceText) ?: -1L)
@@ -1176,7 +1298,7 @@ fun ProductFormDialog(
                                 err = "أدخل حد تنبيه صحيحًا"
                                 return@Button
                             }
-                            onSave(name, category, sku, cleanUnit, saleP, buyP, stockM, trackStock, minM, notes) { err = it }
+                            onSave(name, category, sku, cleanUnit, saleP, halfWholesaleP, wholesaleP, buyP, stockM, trackStock, minM, notes) { err = it }
                         },
                         shape = RoundedCornerShape(14.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = PrimaryBlue),
@@ -1340,10 +1462,13 @@ fun ProductPickerDialog(
     products: List<ProductEntity>,
     currency: String,
     onDismiss: () -> Unit,
-    onSelect: (ProductEntity) -> Unit,
-    onQuickAddNew: () -> Unit
+    onSelect: (ProductEntity) -> Unit = {},
+    onQuickAddNew: () -> Unit,
+    showPriceTierSelector: Boolean = false,
+    onSelectWithPrice: ((ProductEntity, Long) -> Unit)? = null
 ) {
     var query by remember { mutableStateOf("") }
+    var selectedTier by remember { mutableStateOf(SalePriceTier.RETAIL) }
     val extras = HesabatyThemeExtras.colors
     val uiScale = HesabatyThemeExtras.uiScale
     val filtered = remember(products, query) {
@@ -1443,6 +1568,32 @@ fun ProductPickerDialog(
                         modifier = Modifier.fillMaxWidth()
                     )
 
+                    if (showPriceTierSelector) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            SalePriceTier.entries.forEach { tier ->
+                                FilterChip(
+                                    selected = selectedTier == tier,
+                                    onClick = { selectedTier = tier },
+                                    label = {
+                                        Text(
+                                            text = tier.arabicLabel,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            fontWeight = FontWeight.Bold,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    },
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .testTag("picker_tier_${tier.name}")
+                                )
+                            }
+                        }
+                    }
+
                     if (filtered.isEmpty()) {
                         Surface(
                             shape = RoundedCornerShape(16.dp),
@@ -1470,8 +1621,19 @@ fun ProductPickerDialog(
                         ) {
                             items(filtered, key = { it.id }) { prod ->
                                 val unitCat = UnitMeasurement.categoryForUnit(prod.unitLabel)
+                                val displayPrice = if (showPriceTierSelector) {
+                                    prod.priceForTier(selectedTier)
+                                } else {
+                                    prod.salePricePiasters
+                                }
                                 HesabatyCard(
-                                    onClick = { onSelect(prod) },
+                                    onClick = {
+                                        if (onSelectWithPrice != null) {
+                                            onSelectWithPrice(prod, displayPrice)
+                                        } else {
+                                            onSelect(prod)
+                                        }
+                                    },
                                     modifier = Modifier.fillMaxWidth()
                                 ) {
                                     Row(
@@ -1490,6 +1652,20 @@ fun ProductPickerDialog(
                                                     textColor = PrimaryBlue,
                                                     backgroundColor = PrimaryBlue.copy(alpha = 0.1f)
                                                 )
+                                                if (prod.halfWholesalePricePiasters > 0L) {
+                                                    StatusBadge(
+                                                        label = "1/2 جملة: ${MoneyFormatter.formatEgp(prod.halfWholesalePricePiasters, currency)}",
+                                                        textColor = PrimaryBlue,
+                                                        backgroundColor = PrimaryBlue.copy(alpha = 0.08f)
+                                                    )
+                                                }
+                                                if (prod.wholesalePricePiasters > 0L) {
+                                                    StatusBadge(
+                                                        label = "جملة: ${MoneyFormatter.formatEgp(prod.wholesalePricePiasters, currency)}",
+                                                        textColor = extras.success,
+                                                        backgroundColor = extras.successContainer
+                                                    )
+                                                }
                                                 if (prod.trackStock) {
                                                     StatusBadge(
                                                         label = "متاح: ${MoneyFormatter.formatQuantity(prod.stockQuantityMilli)}",
@@ -1502,13 +1678,17 @@ fun ProductPickerDialog(
                                         Spacer(modifier = Modifier.width(8.dp))
                                         Column(horizontalAlignment = Alignment.End) {
                                             Text(
-                                                text = MoneyFormatter.formatEgp(prod.salePricePiasters, currency),
+                                                text = MoneyFormatter.formatEgp(displayPrice, currency),
                                                 style = MaterialTheme.typography.titleSmall,
                                                 fontWeight = FontWeight.ExtraBold,
                                                 color = PrimaryBlue
                                             )
                                             Text(
-                                                text = "لكل ${prod.unitLabel}",
+                                                text = if (showPriceTierSelector) {
+                                                    "${selectedTier.arabicLabel} / ${prod.unitLabel}"
+                                                } else {
+                                                    "لكل ${prod.unitLabel}"
+                                                },
                                                 style = MaterialTheme.typography.labelSmall,
                                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                                             )

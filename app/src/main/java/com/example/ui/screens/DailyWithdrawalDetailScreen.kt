@@ -439,8 +439,22 @@ fun DailyWithdrawalDetailScreen(
             products = products,
             currency = currency,
             onDismiss = { showAddWithdrawalDialog = false },
-            onQuickAddProduct = { name, cat, sku, unit, saleP, buyP, stockM, track, minM, pNotes, onDone ->
-                viewModel.addProduct(name, cat, sku, unit, saleP, buyP, stockM, track, minM, pNotes, onDone)
+            onQuickAddProduct = { name, cat, sku, unit, saleP, halfWholesaleP, wholesaleP, buyP, stockM, track, minM, pNotes, onDone ->
+                viewModel.addProduct(
+                    name = name,
+                    category = cat,
+                    skuOrBarcode = sku,
+                    unitLabel = unit,
+                    salePricePiasters = saleP,
+                    purchasePricePiasters = buyP,
+                    stockQuantityMilli = stockM,
+                    trackStock = track,
+                    minStockAlertMilli = minM,
+                    notes = pNotes,
+                    halfWholesalePricePiasters = halfWholesaleP,
+                    wholesalePricePiasters = wholesaleP,
+                    onDone = onDone
+                )
             },
             onSave = { desc, price, qty, notes, prodId, onErr ->
                 viewModel.addDailyWithdrawalItem(dailyInvoiceId, desc, price, qty, notes, prodId) { ok, msg ->
@@ -585,7 +599,7 @@ private fun AddDailyItemDialog(
     products: List<ProductEntity>,
     currency: String,
     onDismiss: () -> Unit,
-    onQuickAddProduct: (String, String, String, String, Long, Long, Long, Boolean, Long, String, (Boolean, String) -> Unit) -> Unit,
+    onQuickAddProduct: (String, String, String, String, Long, Long, Long, Long, Long, Boolean, Long, String, (Boolean, String) -> Unit) -> Unit,
     onSave: (String, Long, Long, String, String?, (String) -> Unit) -> Unit
 ) {
     val extras = HesabatyThemeExtras.colors
@@ -854,10 +868,11 @@ private fun AddDailyItemDialog(
         ProductPickerDialog(
             products = products,
             currency = currency,
+            showPriceTierSelector = true,
             onDismiss = { showPicker = false },
-            onSelect = { prod ->
+            onSelectWithPrice = { prod, pickedPrice ->
                 desc = prod.name
-                priceText = if (prod.salePricePiasters > 0L) MoneyFormatter.formatEgpPlainInput(prod.salePricePiasters) else ""
+                priceText = if (pickedPrice > 0L) MoneyFormatter.formatEgpPlainInput(pickedPrice) else ""
                 unitLabel = prod.unitLabel.ifBlank { "قطعة" }
                 subUnitLabel = UnitMeasurement.subUnitsFor(unitLabel).first().label
                 selectedProductId = prod.id
@@ -876,8 +891,8 @@ private fun AddDailyItemDialog(
             initial = null,
             currency = currency,
             onDismiss = { showQuickAdd = false },
-            onSave = { name, cat, sku, unit, saleP, buyP, stockM, track, minM, pNotes, onErr ->
-                onQuickAddProduct(name, cat, sku, unit, saleP, buyP, stockM, track, minM, pNotes) { ok, idOrErr ->
+            onSave = { name, cat, sku, unit, saleP, halfWholesaleP, wholesaleP, buyP, stockM, track, minM, pNotes, onErr ->
+                onQuickAddProduct(name, cat, sku, unit, saleP, halfWholesaleP, wholesaleP, buyP, stockM, track, minM, pNotes) { ok, idOrErr ->
                     if (ok) {
                         desc = name.trim()
                         priceText = if (saleP > 0L) MoneyFormatter.formatEgpPlainInput(saleP) else ""

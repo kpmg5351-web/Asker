@@ -2492,11 +2492,13 @@ class AccountingRepository(private val db: HesabatyDatabase) {
         stockQuantityMilli: Long,
         trackStock: Boolean,
         minStockAlertMilli: Long,
-        notes: String
+        notes: String,
+        halfWholesalePricePiasters: Long = 0L,
+        wholesalePricePiasters: Long = 0L
     ): RepoResult<ProductEntity> {
         val cleanName = name.trim()
         if (cleanName.length < 2) return RepoResult.Error("يرجى إدخال اسم الصنف (حرفين على الأقل)")
-        if (salePricePiasters < 0L || purchasePricePiasters < 0L) {
+        if (salePricePiasters < 0L || halfWholesalePricePiasters < 0L || wholesalePricePiasters < 0L || purchasePricePiasters < 0L) {
             return RepoResult.Error("السعر لا يمكن أن يكون سالبًا")
         }
         if (trackStock && stockQuantityMilli < 0L) {
@@ -2512,6 +2514,8 @@ class AccountingRepository(private val db: HesabatyDatabase) {
             skuOrBarcode = skuOrBarcode.trim(),
             unitLabel = unitLabel.trim().ifBlank { "قطعة" },
             salePricePiasters = salePricePiasters,
+            halfWholesalePricePiasters = halfWholesalePricePiasters,
+            wholesalePricePiasters = wholesalePricePiasters,
             purchasePricePiasters = purchasePricePiasters,
             stockQuantityMilli = if (trackStock) stockQuantityMilli else 0L,
             trackStock = trackStock,
@@ -2529,7 +2533,7 @@ class AccountingRepository(private val db: HesabatyDatabase) {
                 action = "ADD_PRODUCT",
                 entityType = "PRODUCT",
                 entityId = product.id,
-                details = "إضافة صنف: ${product.name} — سعر البيع ${MoneyFormatter.formatEgp(product.salePricePiasters)}"
+                details = "إضافة صنف: ${product.name} — قطاعي ${MoneyFormatter.formatEgp(product.salePricePiasters)}"
             )
             RepoResult.Success(product)
         }
@@ -2548,11 +2552,13 @@ class AccountingRepository(private val db: HesabatyDatabase) {
         stockQuantityMilli: Long,
         trackStock: Boolean,
         minStockAlertMilli: Long,
-        notes: String
+        notes: String,
+        halfWholesalePricePiasters: Long = 0L,
+        wholesalePricePiasters: Long = 0L
     ): RepoResult<ProductEntity> {
         val cleanName = name.trim()
         if (cleanName.length < 2) return RepoResult.Error("يرجى إدخال اسم الصنف (حرفين على الأقل)")
-        if (salePricePiasters < 0L || purchasePricePiasters < 0L) {
+        if (salePricePiasters < 0L || halfWholesalePricePiasters < 0L || wholesalePricePiasters < 0L || purchasePricePiasters < 0L) {
             return RepoResult.Error("السعر لا يمكن أن يكون سالبًا")
         }
         return db.withTransaction {
@@ -2564,6 +2570,8 @@ class AccountingRepository(private val db: HesabatyDatabase) {
                 skuOrBarcode = skuOrBarcode.trim(),
                 unitLabel = unitLabel.trim().ifBlank { "قطعة" },
                 salePricePiasters = salePricePiasters,
+                halfWholesalePricePiasters = halfWholesalePricePiasters,
+                wholesalePricePiasters = wholesalePricePiasters,
                 purchasePricePiasters = purchasePricePiasters,
                 stockQuantityMilli = if (trackStock) stockQuantityMilli.coerceAtLeast(0L) else 0L,
                 trackStock = trackStock,
@@ -2578,7 +2586,7 @@ class AccountingRepository(private val db: HesabatyDatabase) {
                 action = "UPDATE_PRODUCT",
                 entityType = "PRODUCT",
                 entityId = updated.id,
-                details = "تعديل صنف: ${updated.name} — سعر البيع ${MoneyFormatter.formatEgp(updated.salePricePiasters)}"
+                details = "تعديل صنف: ${updated.name} — قطاعي ${MoneyFormatter.formatEgp(updated.salePricePiasters)}"
             )
             RepoResult.Success(updated)
         }

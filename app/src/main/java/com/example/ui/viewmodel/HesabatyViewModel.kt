@@ -1248,6 +1248,8 @@ class HesabatyViewModel(private val container: AppContainer) : ViewModel() {
         trackStock: Boolean,
         minStockAlertMilli: Long,
         notes: String,
+        halfWholesalePricePiasters: Long = 0L,
+        wholesalePricePiasters: Long = 0L,
         onDone: (Boolean, String) -> Unit
     ) {
         val (tid, actor) = requireShopActor() ?: return
@@ -1265,7 +1267,9 @@ class HesabatyViewModel(private val container: AppContainer) : ViewModel() {
                     stockQuantityMilli = stockQuantityMilli,
                     trackStock = trackStock,
                     minStockAlertMilli = minStockAlertMilli,
-                    notes = notes
+                    notes = notes,
+                    halfWholesalePricePiasters = halfWholesalePricePiasters,
+                    wholesalePricePiasters = wholesalePricePiasters
                 )
             ) {
                 is RepoResult.Error -> onDone(false, res.message)
@@ -1289,6 +1293,8 @@ class HesabatyViewModel(private val container: AppContainer) : ViewModel() {
         trackStock: Boolean,
         minStockAlertMilli: Long,
         notes: String,
+        halfWholesalePricePiasters: Long = 0L,
+        wholesalePricePiasters: Long = 0L,
         onDone: (Boolean, String) -> Unit
     ) {
         val (tid, actor) = requireShopActor() ?: return
@@ -1307,7 +1313,9 @@ class HesabatyViewModel(private val container: AppContainer) : ViewModel() {
                     stockQuantityMilli = stockQuantityMilli,
                     trackStock = trackStock,
                     minStockAlertMilli = minStockAlertMilli,
-                    notes = notes
+                    notes = notes,
+                    halfWholesalePricePiasters = halfWholesalePricePiasters,
+                    wholesalePricePiasters = wholesalePricePiasters
                 )
             ) {
                 is RepoResult.Error -> onDone(false, res.message)

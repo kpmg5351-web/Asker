@@ -527,6 +527,12 @@ data class DeviceTrialRegistryEntity(
 )
 
 // 17. Products (Optional Shop Items & Inventory Catalog)
+enum class SalePriceTier(val arabicLabel: String) {
+    RETAIL("قطاعي"),
+    HALF_WHOLESALE("1/2 جملة"),
+    WHOLESALE("جملة")
+}
+
 @JsonClass(generateAdapter = true)
 @Entity(
     tableName = "products",
@@ -542,8 +548,10 @@ data class ProductEntity(
     val category: String = "عام",
     val skuOrBarcode: String = "",
     val unitLabel: String = "قطعة",
-    val salePricePiasters: Long = 0L,
-    val purchasePricePiasters: Long = 0L,
+    val salePricePiasters: Long = 0L, // قطاعي
+    val halfWholesalePricePiasters: Long = 0L, // نصف جملة
+    val wholesalePricePiasters: Long = 0L, // جملة
+    val purchasePricePiasters: Long = 0L, // شراء
     val stockQuantityMilli: Long = 0L, // 1000 = 1.000
     val trackStock: Boolean = false,
     val minStockAlertMilli: Long = 0L,
@@ -551,7 +559,13 @@ data class ProductEntity(
     val isActive: Boolean = true,
     val createdAt: Long,
     val updatedAt: Long
-)
+) {
+    fun priceForTier(tier: SalePriceTier): Long = when (tier) {
+        SalePriceTier.RETAIL -> salePricePiasters
+        SalePriceTier.HALF_WHOLESALE -> if (halfWholesalePricePiasters > 0L) halfWholesalePricePiasters else salePricePiasters
+        SalePriceTier.WHOLESALE -> if (wholesalePricePiasters > 0L) wholesalePricePiasters else salePricePiasters
+    }
+}
 
 // 18. PurchaseInvoices
 @JsonClass(generateAdapter = true)

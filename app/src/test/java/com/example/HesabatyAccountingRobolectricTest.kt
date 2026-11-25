@@ -1330,4 +1330,109 @@ class HesabatyAccountingRobolectricTest {
         assertTrue(creditSettle is RepoResult.Success)
         assertEquals(0L, accRepo.observeCustomer(tenantAId, cid).first()!!.currentBalancePiasters)
     }
+
+    @Test
+    fun test31_productFourPriceTiersPersistenceBackupAndTierSelection() = runTest {
+        // 1) Add product with all 4 price tiers: Purchase, Retail (قطاعي), Half-Wholesale (1/2 جملة), Wholesale (جملة)
+        val addRes = accRepo.addProduct(
+            tenantId = tenantAId,
+            actor = ownerA,
+            name = "زيت طعام 1 لتر",
+            category = "مواد غذائية",
+            skuOrBarcode = "OIL-1L",
+            unitLabel = "زجاجة",
+            salePricePiasters = 8_500L, // 85 ج.م قطاعي
+            purchasePricePiasters = 6_800L, // 68 ج.م شراء
+            stockQuantityMilli = 50_000L,
+            trackStock = true,
+            minStockAlertMilli = 5_000L,
+            notes = "",
+            halfWholesalePricePiasters = 7_800L, // 78 ج.م 1/2 جملة
+            wholesalePricePiasters = 7_400L // 74 ج.م جملة
+        )
+        assertTrue(addRes is RepoResult.Success)
+        val prod = (addRes as RepoResult.Success).data
+        assertEquals(6_800L, prod.purchasePricePiasters)
+        assertEquals(8_500L, prod.salePricePiasters)
+        assertEquals(7_800L, prod.halfWholesalePricePiasters)
+        assertEquals(7_400L, prod.wholesalePricePiasters)
+        assertEquals(8_500L, prod.priceForTier(com.example.data.local.SalePriceTier.RETAIL))
+        assertEquals(7_800L, prod.priceForTier(com.example.data.local.SalePriceTier.HALF_WHOLESALE))
+        assertEquals(7_400L, prod.priceForTier(com.example.data.local.SalePriceTier.WHOLESALE))
+
+        // 2) Product with only retail price falls back to retail when selecting half-wholesale or wholesale
+        val fallbackProd = (accRepo.addProduct(
+            tenantId = tenantAId,
+            actor = ownerA,
+            name = "سكر أبيض",
+            category = "مواد غذائية",
+            skuOrBarcode = "",
+            unitLabel = "كيلو",
+            salePricePiasters = 3_500L,
+            purchasePricePiasters = 3_000L,
+            stockQuantityMilli = 0L,
+            trackStock = false,
+            minStockAlertMilli = 0L,
+            notes = ""
+        ) as RepoResult.Success).data
+        assertEquals(3_500L, fallbackProd.priceForTier(com.example.data.local.SalePriceTier.HALF_WHOLESALE))
+        assertEquals(3_500L, fallbackProd.priceForTier(com.example.data.local.SalePriceTier.WHOLESALE))
+
+        // 3) Update tiers and verify negative price validation
+        val badRes = accRepo.updateProduct(
+            tenantId = tenantAId,
+            actor = ownerA,
+            productId = prod.id,
+            name = prod.name,
+            category = prod.category,
+            skuOrBarcode = prod.skuOrBarcode,
+            unitLabel = prod.unitLabel,
+            salePricePiasters = 8_500L,
+            purchasePricePiasters = 6_800L,
+            stockQuantityMilli = 50_000L,
+            trackStock = true,
+            minStockAlertMilli = 5_000L,
+            notes = "",
+            halfWholesalePricePiasters = -100L,
+            wholesalePricePiasters = 7_400L
+        )
+        assertTrue(badRes is RepoResult.Error)
+
+        val updRes = accRepo.updateProduct(
+            tenantId = tenantAId,
+            actor = ownerA,
+            productId = prod.id,
+            name = prod.name,
+            category = prod.category,
+            skuOrBarcode = prod.skuOrBarcode,
+            unitLabel = prod.unitLabel,
+            salePricePiasters = 9_000L,
+            purchasePricePiasters = 7_000L,
+            stockQuantityMilli = 50_000L,
+            trackStock = true,
+            minStockAlertMilli = 5_000L,
+            notes = "",
+            halfWholesalePricePiasters = 8_200L,
+            wholesalePricePiasters = 7_600L
+        )
+        assertTrue(updRes is RepoResult.Success)
+        val updated = (updRes as RepoResult.Success).data
+        assertEquals(9_000L, updated.salePricePiasters)
+        assertEquals(8_200L, updated.halfWholesalePricePiasters)
+        assertEquals(7_600L, updated.wholesalePricePiasters)
+        assertEquals(7_000L, updated.purchasePricePiasters)
+
+        // 4) Encrypted backup & restore must preserve all 4 price tiers
+        val (_, bytes) = backupManager.buildEncryptedBackupBytes(tenantAId, "passTier123")
+        accRepo.deleteProduct(tenantAId, ownerA, prod.id)
+        assertEquals(null, db.productDao().getProductById(tenantAId, prod.id))
+
+        val restoreRes = backupManager.restoreFromEncryptedBytes(bytes, tenantAId, ownerA.id, ownerA.username, "passTier123")
+        assertTrue(restoreRes is BackupOpResult.Success)
+        val restored = db.productDao().getProductById(tenantAId, prod.id)!!
+        assertEquals(9_000L, restored.salePricePiasters)
+        assertEquals(8_200L, restored.halfWholesalePricePiasters)
+        assertEquals(7_600L, restored.wholesalePricePiasters)
+        assertEquals(7_000L, restored.purchasePricePiasters)
+    }
 }

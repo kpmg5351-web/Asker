@@ -770,8 +770,21 @@ fun NewPurchaseScreen(
             initial = null,
             currency = currency,
             onDismiss = { showQuickAddProductDialog = false },
-            onSave = { name, cat, sku, unit, saleP, buyP, stockM, track, minM, pNotes, onErr ->
-                viewModel.addProduct(name, cat, sku, unit, saleP, buyP, stockM, track, minM, pNotes) { ok, newIdOrErr ->
+            onSave = { name, cat, sku, unit, saleP, halfWholesaleP, wholesaleP, buyP, stockM, track, minM, pNotes, onErr ->
+                viewModel.addProduct(
+                    name = name,
+                    category = cat,
+                    skuOrBarcode = sku,
+                    unitLabel = unit,
+                    salePricePiasters = saleP,
+                    purchasePricePiasters = buyP,
+                    stockQuantityMilli = stockM,
+                    trackStock = track,
+                    minStockAlertMilli = minM,
+                    notes = pNotes,
+                    halfWholesalePricePiasters = halfWholesaleP,
+                    wholesalePricePiasters = wholesaleP
+                ) { ok, newIdOrErr ->
                     if (ok) {
                         val pickedBuy = if (buyP > 0L) buyP else saleP
                         val priceStr = if (pickedBuy > 0L) MoneyFormatter.formatEgpPlainInput(pickedBuy) else ""
