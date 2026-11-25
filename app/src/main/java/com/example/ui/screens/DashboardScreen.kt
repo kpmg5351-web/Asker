@@ -912,45 +912,28 @@ private fun CurvedDashboardHeader(
                     )
                 }
 
-                // Center: Hesabaty Logo + Title
-                Column(
-                    horizontalAlignment = Alignment.CenterHorizontally,
+                // Center: Hesabaty Horizontal Brand Header
+                Box(
+                    contentAlignment = Alignment.Center,
                     modifier = Modifier
                         .weight(1f)
                         .padding(horizontal = 4.dp)
                 ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Surface(
-                            shape = RoundedCornerShape(if (uiScale.isCompact) 9.dp else 12.dp),
-                            color = Color.White,
-                            shadowElevation = 4.dp,
-                            modifier = Modifier.size(if (uiScale.isCompact) 28.dp else 34.dp)
-                        ) {
-                            Image(
-                                painter = painterResource(id = R.drawable.ic_hesabaty_brand),
-                                contentDescription = "شعار حساباتي",
-                                contentScale = ContentScale.Crop,
-                                modifier = Modifier.fillMaxSize()
-                            )
-                        }
-                        Spacer(modifier = Modifier.width(5.dp))
-                        Text(
-                            text = "حساباتي",
-                            style = if (uiScale.isCompact) MaterialTheme.typography.titleMedium else MaterialTheme.typography.titleLarge,
-                            fontWeight = FontWeight.ExtraBold,
-                            color = AccentGold,
-                            maxLines = 1
-                        )
-                    }
-                    if (!uiScale.isNarrow) {
-                        Text(
-                            text = "H E S A B A T Y",
-                            style = MaterialTheme.typography.labelSmall.copy(
-                                letterSpacing = if (uiScale.isCompact) 1.2.sp else 2.2.sp,
-                                fontWeight = FontWeight.SemiBold
-                            ),
-                            color = Color.White.copy(alpha = 0.9f),
-                            maxLines = 1
+                    Surface(
+                        shape = RoundedCornerShape(50),
+                        color = Color.White,
+                        shadowElevation = 4.dp,
+                        modifier = Modifier.height(if (uiScale.isCompact) 36.dp else 42.dp)
+                    ) {
+                        Image(
+                            painter = painterResource(id = R.drawable.img_hesabaty_header),
+                            contentDescription = "حساباتي",
+                            contentScale = ContentScale.Fit,
+                            modifier = Modifier
+                                .padding(
+                                    horizontal = if (uiScale.isCompact) 10.dp else 14.dp,
+                                    vertical = if (uiScale.isCompact) 4.dp else 5.dp
+                                )
                         )
                     }
                 }

@@ -224,29 +224,31 @@ fun LoginScreen(
                 ) {
                     Spacer(modifier = Modifier.height(4.dp))
 
-                    // App Brand Icon
+                    // App Brand Vertical Logo
                     Surface(
-                        shape = RoundedCornerShape(if (uiScale.isCompact) 18.dp else 22.dp),
-                        shadowElevation = 10.dp,
-                        color = HesabatyBlue,
-                        modifier = Modifier.size(if (uiScale.isCompact) 62.dp else 78.dp)
+                        shape = RoundedCornerShape(if (uiScale.isCompact) 20.dp else 24.dp),
+                        shadowElevation = 8.dp,
+                        color = Color.White,
+                        border = BorderStroke(1.dp, if (isDarkMode) Color(0xFF283C5E) else Color(0xFFD6E4FA)),
+                        modifier = Modifier.size(if (uiScale.isCompact) 104.dp else 124.dp)
                     ) {
                         Image(
-                            painter = painterResource(id = R.drawable.ic_hesabaty_brand),
+                            painter = painterResource(id = R.drawable.img_hesabaty_logo),
                             contentDescription = "شعار تطبيق حساباتي",
-                            contentScale = ContentScale.Crop,
-                            modifier = Modifier.fillMaxSize()
+                            contentScale = ContentScale.Fit,
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(if (uiScale.isCompact) 8.dp else 10.dp)
                         )
                     }
 
-                    Spacer(modifier = Modifier.height(if (uiScale.isCompact) 8.dp else 12.dp))
+                    Spacer(modifier = Modifier.height(if (uiScale.isCompact) 6.dp else 8.dp))
 
-                    // App Brand Title
                     Text(
-                        text = "حساباتي | HESABATY",
-                        style = (if (uiScale.isCompact) MaterialTheme.typography.headlineSmall else MaterialTheme.typography.headlineMedium).copy(
+                        text = "H E S A B A T Y",
+                        style = MaterialTheme.typography.labelLarge.copy(
                             fontWeight = FontWeight.ExtraBold,
-                            letterSpacing = 0.2.sp
+                            letterSpacing = 2.4.sp
                         ),
                         color = titleColor,
                         textAlign = TextAlign.Center
