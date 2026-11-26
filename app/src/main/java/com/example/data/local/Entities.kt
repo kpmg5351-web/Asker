@@ -610,7 +610,9 @@ data class PurchaseInvoiceItemEntity(
     val unitPricePiasters: Long,
     val quantityMilli: Long, // 1000 = 1.000
     val lineTotalPiasters: Long,
-    val sortOrder: Int = 0
+    val sortOrder: Int = 0,
+    val wholesalePricePiasters: Long = 0L,
+    val retailPricePiasters: Long = 0L
 )
 
 // 20. QuickSales (مبيعات وسحوبات سريعة بدون عميل - بالسعر فقط وبيان اختياري)

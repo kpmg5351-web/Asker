@@ -211,8 +211,9 @@ fun PurchaseInvoicePreviewScreen(
                     }
 
                     val printLines = buildPrintLines()
-                    printLines.forEach { row ->
+                    printLines.forEachIndexed { index, row ->
                         val (pounds, piasters) = MoneyFormatter.splitPoundsAndPiasters(row.lineTotalPiasters)
+                        val rawItem = items.getOrNull(index)
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -220,7 +221,20 @@ fun PurchaseInvoicePreviewScreen(
                                 .padding(vertical = 8.dp, horizontal = 6.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text(row.description, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(2.2f))
+                            Column(modifier = Modifier.weight(2.2f)) {
+                                Text(row.description, style = MaterialTheme.typography.bodySmall)
+                                if (rawItem != null && (rawItem.wholesalePricePiasters > 0L || rawItem.retailPricePiasters > 0L)) {
+                                    val tags = buildList {
+                                        if (rawItem.wholesalePricePiasters > 0L) add("جملة: ${MoneyFormatter.formatEgp(rawItem.wholesalePricePiasters, currency)}")
+                                        if (rawItem.retailPricePiasters > 0L) add("قطاعي: ${MoneyFormatter.formatEgp(rawItem.retailPricePiasters, currency)}")
+                                    }.joinToString(" • ")
+                                    Text(
+                                        text = tags,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                }
+                            }
                             Text(MoneyFormatter.formatEgp(row.unitPricePiasters, ""), style = MaterialTheme.typography.bodySmall, textAlign = TextAlign.Center, modifier = Modifier.weight(1f))
                             Text(MoneyFormatter.formatQuantity(row.quantityMilli), style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center, modifier = Modifier.weight(0.95f))
                             Text(MoneyFormatter.formatEgp(pounds * 100L, ""), style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center, modifier = Modifier.weight(0.95f))

@@ -84,10 +84,13 @@ private data class PurchaseLineInputRow(
     val id: String = UUID.randomUUID().toString(),
     val description: String = "",
     val unitPriceText: String = "",
+    val wholesalePriceText: String = "",
+    val retailPriceText: String = "",
     val quantityText: String = "1",
     val productId: String? = null,
     val unitLabel: String = "قطعة",
-    val subUnitLabel: String = "قطعة"
+    val subUnitLabel: String = "قطعة",
+    val saveToCatalog: Boolean = false
 ) {
     val activeSubOption: UnitSubOption
         get() {
@@ -414,6 +417,39 @@ fun NewPurchaseScreen(
                                     }
 
                                     Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        OutlinedTextField(
+                                            value = row.wholesalePriceText,
+                                            onValueChange = { newVal ->
+                                                val autoSave = if (row.productId == null && newVal.isNotBlank()) true else row.saveToCatalog
+                                                lineRows[idx] = row.copy(wholesalePriceText = newVal, saveToCatalog = autoSave)
+                                                errorMsg = null
+                                            },
+                                            label = { Text("سعر بيع جملة") },
+                                            placeholder = { Text("اختياري") },
+                                            singleLine = true,
+                                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                            modifier = Modifier.weight(1f).testTag("purchase_wholesale_price_input_$idx")
+                                        )
+                                        OutlinedTextField(
+                                            value = row.retailPriceText,
+                                            onValueChange = { newVal ->
+                                                val autoSave = if (row.productId == null && newVal.isNotBlank()) true else row.saveToCatalog
+                                                lineRows[idx] = row.copy(retailPriceText = newVal, saveToCatalog = autoSave)
+                                                errorMsg = null
+                                            },
+                                            label = { Text("سعر بيع قطاعي") },
+                                            placeholder = { Text("اختياري") },
+                                            singleLine = true,
+                                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                            modifier = Modifier.weight(1f).testTag("purchase_retail_price_input_$idx")
+                                        )
+                                    }
+
+                                    Row(
                                         modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
                                         horizontalArrangement = Arrangement.spacedBy(6.dp)
                                     ) {
@@ -446,6 +482,34 @@ fun NewPurchaseScreen(
                                         singleLine = true,
                                         modifier = Modifier.fillMaxWidth().testTag("purchase_desc_input_$idx")
                                     )
+
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        if (row.productId != null) {
+                                            Text(
+                                                text = "سيتم تحديث سعر الشراء والبيع والمخزون بالصنف تلقائيًا",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = extras.success,
+                                                fontWeight = FontWeight.SemiBold
+                                            )
+                                        } else {
+                                            FilterChip(
+                                                selected = row.saveToCatalog,
+                                                onClick = { lineRows[idx] = row.copy(saveToCatalog = !row.saveToCatalog) },
+                                                label = {
+                                                    Text(
+                                                        text = if (row.saveToCatalog) "سيُضاف الصنف بالأسعار إلى الأصناف" else "حفظ الصنف في الأصناف",
+                                                        style = MaterialTheme.typography.labelSmall,
+                                                        fontWeight = FontWeight.SemiBold
+                                                    )
+                                                },
+                                                modifier = Modifier.testTag("purchase_save_catalog_chip_$idx")
+                                            )
+                                        }
+                                    }
 
                                     Surface(
                                         shape = RoundedCornerShape(10.dp),
@@ -645,6 +709,16 @@ fun NewPurchaseScreen(
                                     errorMsg = "يرجى إدخال سعر شراء صحيح أكبر من صفر في كل بند"
                                     return@Button
                                 }
+                                val wholesaleP = if (row.wholesalePriceText.isBlank()) 0L else (MoneyFormatter.parseEgpToPiasters(row.wholesalePriceText) ?: -1L)
+                                if (wholesaleP < 0L) {
+                                    errorMsg = "يرجى إدخال سعر بيع جملة صحيح"
+                                    return@Button
+                                }
+                                val retailP = if (row.retailPriceText.isBlank()) 0L else (MoneyFormatter.parseEgpToPiasters(row.retailPriceText) ?: -1L)
+                                if (retailP < 0L) {
+                                    errorMsg = "يرجى إدخال سعر بيع قطاعي صحيح"
+                                    return@Button
+                                }
                                 val activeSub = row.activeSubOption
                                 val qty = if (row.quantityText.isBlank() && activeSub.numerator == activeSub.denominator) {
                                     1000L
@@ -662,7 +736,18 @@ fun NewPurchaseScreen(
                                     rawQtyInput = row.quantityText.ifBlank { "1" },
                                     defaultFallbackDesc = "مشتريات بضاعة"
                                 )
-                                parsedLines.add(PurchaseLineDraft(finalDesc, price, qty, row.productId))
+                                parsedLines.add(
+                                    PurchaseLineDraft(
+                                        description = finalDesc,
+                                        unitPricePiasters = price,
+                                        quantityMilli = qty,
+                                        productId = row.productId,
+                                        wholesalePricePiasters = wholesaleP,
+                                        retailPricePiasters = retailP,
+                                        unitLabel = row.unitLabel,
+                                        saveToCatalog = row.saveToCatalog
+                                    )
+                                )
                             }
 
                             viewModel.createPurchaseInvoice(
@@ -727,10 +812,13 @@ fun NewPurchaseScreen(
         ProductPickerDialog(
             products = products,
             currency = currency,
+            isPurchaseMode = true,
             onDismiss = { showProductPicker = false },
             onSelect = { prod ->
                 val buyOrSale = if (prod.purchasePricePiasters > 0L) prod.purchasePricePiasters else prod.salePricePiasters
                 val priceStr = if (buyOrSale > 0L) MoneyFormatter.formatEgpPlainInput(buyOrSale) else ""
+                val wholesaleStr = if (prod.wholesalePricePiasters > 0L) MoneyFormatter.formatEgpPlainInput(prod.wholesalePricePiasters) else ""
+                val retailStr = if (prod.salePricePiasters > 0L) MoneyFormatter.formatEgpPlainInput(prod.salePricePiasters) else ""
                 val pickedUnit = prod.unitLabel.ifBlank { "قطعة" }
                 val defaultSub = UnitMeasurement.subUnitsFor(pickedUnit).first().label
                 val emptyIndex = lineRows.indexOfFirst { it.description.isBlank() && it.unitPriceText.isBlank() }
@@ -738,20 +826,26 @@ fun NewPurchaseScreen(
                     lineRows[emptyIndex] = lineRows[emptyIndex].copy(
                         description = prod.name,
                         unitPriceText = priceStr,
+                        wholesalePriceText = wholesaleStr,
+                        retailPriceText = retailStr,
                         quantityText = "1",
                         productId = prod.id,
                         unitLabel = pickedUnit,
-                        subUnitLabel = defaultSub
+                        subUnitLabel = defaultSub,
+                        saveToCatalog = false
                     )
                 } else {
                     lineRows.add(
                         PurchaseLineInputRow(
                             description = prod.name,
                             unitPriceText = priceStr,
+                            wholesalePriceText = wholesaleStr,
+                            retailPriceText = retailStr,
                             quantityText = "1",
                             productId = prod.id,
                             unitLabel = pickedUnit,
-                            subUnitLabel = defaultSub
+                            subUnitLabel = defaultSub,
+                            saveToCatalog = false
                         )
                     )
                 }
@@ -788,6 +882,8 @@ fun NewPurchaseScreen(
                     if (ok) {
                         val pickedBuy = if (buyP > 0L) buyP else saleP
                         val priceStr = if (pickedBuy > 0L) MoneyFormatter.formatEgpPlainInput(pickedBuy) else ""
+                        val wholesaleStr = if (wholesaleP > 0L) MoneyFormatter.formatEgpPlainInput(wholesaleP) else ""
+                        val retailStr = if (saleP > 0L) MoneyFormatter.formatEgpPlainInput(saleP) else ""
                         val pickedUnit = unit.ifBlank { "قطعة" }
                         val defaultSub = UnitMeasurement.subUnitsFor(pickedUnit).first().label
                         val emptyIndex = lineRows.indexOfFirst { it.description.isBlank() && it.unitPriceText.isBlank() }
@@ -795,20 +891,26 @@ fun NewPurchaseScreen(
                             lineRows[emptyIndex] = lineRows[emptyIndex].copy(
                                 description = name.trim(),
                                 unitPriceText = priceStr,
+                                wholesalePriceText = wholesaleStr,
+                                retailPriceText = retailStr,
                                 quantityText = "1",
                                 productId = newIdOrErr,
                                 unitLabel = pickedUnit,
-                                subUnitLabel = defaultSub
+                                subUnitLabel = defaultSub,
+                                saveToCatalog = false
                             )
                         } else {
                             lineRows.add(
                                 PurchaseLineInputRow(
                                     description = name.trim(),
                                     unitPriceText = priceStr,
+                                    wholesalePriceText = wholesaleStr,
+                                    retailPriceText = retailStr,
                                     quantityText = "1",
                                     productId = newIdOrErr,
                                     unitLabel = pickedUnit,
-                                    subUnitLabel = defaultSub
+                                    subUnitLabel = defaultSub,
+                                    saveToCatalog = false
                                 )
                             )
                         }

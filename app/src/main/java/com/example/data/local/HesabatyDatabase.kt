@@ -30,7 +30,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         PurchaseInvoiceItemEntity::class,
         QuickSaleEntity::class
     ],
-    version = 8,
+    version = 9,
     exportSchema = false
 )
 abstract class HesabatyDatabase : RoomDatabase() {
@@ -232,6 +232,16 @@ abstract class HesabatyDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * Non-destructive migration adding wholesale & retail selling price snapshots to purchase invoice items.
+         */
+        val MIGRATION_8_9 = object : Migration(8, 9) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE purchase_invoice_items ADD COLUMN wholesalePricePiasters INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE purchase_invoice_items ADD COLUMN retailPricePiasters INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
         @Volatile
         private var INSTANCE: HesabatyDatabase? = null
 
@@ -249,7 +259,8 @@ abstract class HesabatyDatabase : RoomDatabase() {
                         MIGRATION_4_5,
                         MIGRATION_5_6,
                         MIGRATION_6_7,
-                        MIGRATION_7_8
+                        MIGRATION_7_8,
+                        MIGRATION_8_9
                     )
                     .setJournalMode(JournalMode.WRITE_AHEAD_LOGGING)
                     .build()

@@ -1435,4 +1435,87 @@ class HesabatyAccountingRobolectricTest {
         assertEquals(7_600L, restored.wholesalePricePiasters)
         assertEquals(7_000L, restored.purchasePricePiasters)
     }
+
+    @Test
+    fun test32_purchaseInvoiceUpdatesCatalogPurchaseWholesaleRetailPrices() = runTest {
+        val sup = (accRepo.addSupplier(tenantAId, ownerA, "مورد جملة", "01011112222", "", "", "", 0L) as RepoResult.Success).data
+        val existingProd = (accRepo.addProduct(
+            tenantId = tenantAId,
+            actor = ownerA,
+            name = "شاي ناعم",
+            category = "مواد غذائية",
+            skuOrBarcode = "",
+            unitLabel = "علبة",
+            salePricePiasters = 2_000L,
+            purchasePricePiasters = 1_500L,
+            stockQuantityMilli = 10_000L,
+            trackStock = true,
+            minStockAlertMilli = 2_000L,
+            notes = "",
+            wholesalePricePiasters = 1_800L
+        ) as RepoResult.Success).data
+
+        // Create purchase invoice with:
+        // 1) Existing product whose purchase/wholesale/retail prices are updated on purchase
+        // 2) Brand-new product saved directly to catalog with purchase + wholesale + retail prices
+        val purRes = accRepo.createPurchaseInvoice(
+            tenantId = tenantAId,
+            actor = ownerA,
+            supplierId = sup.id,
+            lines = listOf(
+                PurchaseLineDraft(
+                    description = "شاي ناعم",
+                    unitPricePiasters = 1_650L,
+                    quantityMilli = 5_000L,
+                    productId = existingProd.id,
+                    wholesalePricePiasters = 1_950L,
+                    retailPricePiasters = 2_200L,
+                    unitLabel = "علبة"
+                ),
+                PurchaseLineDraft(
+                    description = "مكرونة 400 جم",
+                    unitPricePiasters = 1_100L,
+                    quantityMilli = 20_000L,
+                    productId = null,
+                    wholesalePricePiasters = 1_300L,
+                    retailPricePiasters = 1_500L,
+                    unitLabel = "كيس",
+                    saveToCatalog = true
+                )
+            ),
+            purchaseType = PurchaseTypes.CASH,
+            paymentMethod = PaymentMethods.CASH,
+            paidNowPiasters = 30_250L,
+            dueDateMillis = null,
+            notes = "فاتورة شراء بأسعار بيع محدثة"
+        )
+        assertTrue(purRes is RepoResult.Success)
+        val invoice = (purRes as RepoResult.Success).data
+        assertEquals(30_250L, invoice.totalPiasters)
+
+        // Verify existing product was restocked and its 3 prices updated
+        val updatedExisting = db.productDao().getProductById(tenantAId, existingProd.id)!!
+        assertEquals(15_000L, updatedExisting.stockQuantityMilli)
+        assertEquals(1_650L, updatedExisting.purchasePricePiasters)
+        assertEquals(1_950L, updatedExisting.wholesalePricePiasters)
+        assertEquals(2_200L, updatedExisting.salePricePiasters)
+
+        // Verify new product was created in catalog with all 3 prices and stocked qty
+        val catalog = db.productDao().getProducts(tenantAId)
+        val createdProd = catalog.firstOrNull { it.name == "مكرونة 400 جم" }
+        assertTrue(createdProd != null)
+        assertEquals("كيس", createdProd!!.unitLabel)
+        assertEquals(1_100L, createdProd.purchasePricePiasters)
+        assertEquals(1_300L, createdProd.wholesalePricePiasters)
+        assertEquals(1_500L, createdProd.salePricePiasters)
+        assertEquals(20_000L, createdProd.stockQuantityMilli)
+
+        // Verify purchase invoice items also persisted wholesale & retail snapshots + backup round-trip
+        val items = db.purchaseInvoiceDao().getPurchaseInvoiceItems(tenantAId, invoice.id)
+        assertEquals(2, items.size)
+        assertEquals(1_950L, items[0].wholesalePricePiasters)
+        assertEquals(2_200L, items[0].retailPricePiasters)
+        assertEquals(1_300L, items[1].wholesalePricePiasters)
+        assertEquals(1_500L, items[1].retailPricePiasters)
+    }
 }

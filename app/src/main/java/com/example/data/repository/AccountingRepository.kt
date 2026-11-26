@@ -55,7 +55,11 @@ data class PurchaseLineDraft(
     val description: String,
     val unitPricePiasters: Long,
     val quantityMilli: Long = 1000L,
-    val productId: String? = null
+    val productId: String? = null,
+    val wholesalePricePiasters: Long = 0L,
+    val retailPricePiasters: Long = 0L,
+    val unitLabel: String = "قطعة",
+    val saveToCatalog: Boolean = false
 ) {
     val lineTotalPiasters: Long
         get() = MoneyFormatter.calculateLineTotalPiasters(unitPricePiasters, quantityMilli)
@@ -583,6 +587,9 @@ class AccountingRepository(private val db: HesabatyDatabase) {
         idempotencyKey: String = UUID.randomUUID().toString()
     ): RepoResult<PurchaseInvoiceEntity> {
         if (lines.isEmpty()) return RepoResult.Error("يرجى إدخال صنف أو بند واحد على الأقل")
+        if (lines.any { it.wholesalePricePiasters < 0L || it.retailPricePiasters < 0L }) {
+            return RepoResult.Error("أسعار البيع لا يمكن أن تكون سالبة")
+        }
         val totalPiasters = lines.sumOf { it.lineTotalPiasters }
         if (totalPiasters <= 0L) return RepoResult.Error("إجمالي فاتورة الشراء يجب أن يكون أكبر من صفر")
         if (paidNowPiasters < 0L) return RepoResult.Error("المبلغ المدفوع لا يمكن أن يكون سالبًا")
@@ -637,25 +644,78 @@ class AccountingRepository(private val db: HesabatyDatabase) {
                     unitPricePiasters = draft.unitPricePiasters,
                     quantityMilli = draft.quantityMilli,
                     lineTotalPiasters = draft.lineTotalPiasters,
-                    sortOrder = index
+                    sortOrder = index,
+                    wholesalePricePiasters = draft.wholesalePricePiasters,
+                    retailPricePiasters = draft.retailPricePiasters
                 )
             }
             purchaseInvoiceDao.upsertPurchaseInvoiceItems(itemEntities)
 
-            // Automatically restock tracked catalog products & backfill purchase price if empty
+            // Automatically restock tracked catalog products & sync purchase/wholesale/retail prices
+            val existingCatalogProducts = productDao.getProducts(tenantId)
             for (draft in lines) {
-                val pid = draft.productId ?: continue
-                val prod = productDao.getProductById(tenantId, pid) ?: continue
-                if (prod.trackStock || prod.purchasePricePiasters <= 0L) {
+                val pid = draft.productId
+                if (pid != null) {
+                    val prod = productDao.getProductById(tenantId, pid) ?: continue
                     val updatedStock = if (prod.trackStock) prod.stockQuantityMilli + draft.quantityMilli else prod.stockQuantityMilli
-                    val updatedBuyPrice = if (prod.purchasePricePiasters <= 0L) draft.unitPricePiasters else prod.purchasePricePiasters
+                    val updatedBuyPrice = if (draft.unitPricePiasters > 0L) draft.unitPricePiasters else prod.purchasePricePiasters
+                    val updatedWholesale = if (draft.wholesalePricePiasters > 0L) draft.wholesalePricePiasters else prod.wholesalePricePiasters
+                    val updatedRetail = if (draft.retailPricePiasters > 0L) draft.retailPricePiasters else prod.salePricePiasters
                     productDao.upsertProduct(
                         prod.copy(
                             stockQuantityMilli = updatedStock,
                             purchasePricePiasters = updatedBuyPrice,
+                            wholesalePricePiasters = updatedWholesale,
+                            salePricePiasters = updatedRetail,
                             updatedAt = occurredAtMillis
                         )
                     )
+                } else if (draft.saveToCatalog) {
+                    val cleanName = draft.description.trim().ifBlank { "صنف مشتريات" }
+                    val matched = existingCatalogProducts.firstOrNull {
+                        it.name.trim().equals(cleanName, ignoreCase = true)
+                    }
+                    if (matched != null) {
+                        val updatedStock = if (matched.trackStock) matched.stockQuantityMilli + draft.quantityMilli else matched.stockQuantityMilli
+                        productDao.upsertProduct(
+                            matched.copy(
+                                stockQuantityMilli = updatedStock,
+                                purchasePricePiasters = draft.unitPricePiasters,
+                                wholesalePricePiasters = if (draft.wholesalePricePiasters > 0L) draft.wholesalePricePiasters else matched.wholesalePricePiasters,
+                                salePricePiasters = if (draft.retailPricePiasters > 0L) draft.retailPricePiasters else matched.salePricePiasters,
+                                updatedAt = occurredAtMillis
+                            )
+                        )
+                    } else {
+                        val fallbackRetail = if (draft.retailPricePiasters > 0L) {
+                            draft.retailPricePiasters
+                        } else if (draft.wholesalePricePiasters > 0L) {
+                            draft.wholesalePricePiasters
+                        } else {
+                            draft.unitPricePiasters
+                        }
+                        productDao.upsertProduct(
+                            ProductEntity(
+                                id = UUID.randomUUID().toString(),
+                                tenantId = tenantId,
+                                name = cleanName,
+                                category = "عام",
+                                skuOrBarcode = "",
+                                unitLabel = draft.unitLabel.trim().ifBlank { "قطعة" },
+                                salePricePiasters = fallbackRetail,
+                                halfWholesalePricePiasters = 0L,
+                                wholesalePricePiasters = draft.wholesalePricePiasters,
+                                purchasePricePiasters = draft.unitPricePiasters,
+                                stockQuantityMilli = draft.quantityMilli,
+                                trackStock = true,
+                                minStockAlertMilli = 0L,
+                                notes = "",
+                                isActive = true,
+                                createdAt = occurredAtMillis,
+                                updatedAt = occurredAtMillis
+                            )
+                        )
+                    }
                 }
             }
 

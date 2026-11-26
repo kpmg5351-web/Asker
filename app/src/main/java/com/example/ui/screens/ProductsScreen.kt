@@ -178,14 +178,13 @@ fun ProductsScreen(
             shopName = tenant?.shopName ?: "حساباتي",
             periodLabel = today,
             summaryPairs = summaryPairs,
-            columns = listOf("الصنف", "الوحدة", "قطاعي", "1/2 جملة", "جملة"),
+            columns = listOf("الصنف", "الوحدة", "بيع جملة", "بيع قطاعي"),
             rows = listToShare.map { p ->
                 listOf(
                     p.name,
                     p.unitLabel,
-                    MoneyFormatter.formatEgp(p.salePricePiasters, currency),
-                    if (p.halfWholesalePricePiasters > 0L) MoneyFormatter.formatEgp(p.halfWholesalePricePiasters, currency) else "—",
-                    if (p.wholesalePricePiasters > 0L) MoneyFormatter.formatEgp(p.wholesalePricePiasters, currency) else "—"
+                    if (p.wholesalePricePiasters > 0L) MoneyFormatter.formatEgp(p.wholesalePricePiasters, currency) else "—",
+                    MoneyFormatter.formatEgp(p.salePricePiasters, currency)
                 )
             }
         )
@@ -388,35 +387,26 @@ fun ProductsScreen(
                             }
                         }
 
-                        if (product.purchasePricePiasters > 0L ||
-                            product.halfWholesalePricePiasters > 0L ||
-                            product.wholesalePricePiasters > 0L
-                        ) {
+                        if (product.purchasePricePiasters > 0L || product.wholesalePricePiasters > 0L) {
                             Spacer(modifier = Modifier.height(8.dp))
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.spacedBy(6.dp)
                             ) {
                                 SummaryStatPill(
-                                    label = "الشراء",
+                                    label = "سعر الشراء",
                                     value = if (product.purchasePricePiasters > 0L) MoneyFormatter.formatEgp(product.purchasePricePiasters, currency) else "—",
                                     valueColor = MaterialTheme.colorScheme.onSurface,
                                     modifier = Modifier.weight(1f)
                                 )
                                 SummaryStatPill(
-                                    label = "الجملة",
+                                    label = "بيع جملة",
                                     value = if (product.wholesalePricePiasters > 0L) MoneyFormatter.formatEgp(product.wholesalePricePiasters, currency) else "—",
                                     valueColor = extras.success,
                                     modifier = Modifier.weight(1f)
                                 )
                                 SummaryStatPill(
-                                    label = "1/2 جملة",
-                                    value = if (product.halfWholesalePricePiasters > 0L) MoneyFormatter.formatEgp(product.halfWholesalePricePiasters, currency) else "—",
-                                    valueColor = PrimaryBlue,
-                                    modifier = Modifier.weight(1f)
-                                )
-                                SummaryStatPill(
-                                    label = "القطاعي",
+                                    label = "بيع قطاعي",
                                     value = MoneyFormatter.formatEgp(product.salePricePiasters, currency),
                                     valueColor = MaterialTheme.colorScheme.primary,
                                     modifier = Modifier.weight(1f)
@@ -632,11 +622,6 @@ fun ProductFormDialog(
             if (initial != null && initial.salePricePiasters > 0L) MoneyFormatter.formatEgpPlainInput(initial.salePricePiasters) else ""
         )
     }
-    var halfWholesalePriceText by remember {
-        mutableStateOf(
-            if (initial != null && initial.halfWholesalePricePiasters > 0L) MoneyFormatter.formatEgpPlainInput(initial.halfWholesalePricePiasters) else ""
-        )
-    }
     var wholesalePriceText by remember {
         mutableStateOf(
             if (initial != null && initial.wholesalePricePiasters > 0L) MoneyFormatter.formatEgpPlainInput(initial.wholesalePricePiasters) else ""
@@ -664,7 +649,6 @@ fun ProductFormDialog(
     val extras = HesabatyThemeExtras.colors
     val uiScale = HesabatyThemeExtras.uiScale
     val parsedSalePreview = remember(salePriceText) { MoneyFormatter.parseEgpToPiasters(salePriceText) ?: 0L }
-    val parsedHalfWholesalePreview = remember(halfWholesalePriceText) { MoneyFormatter.parseEgpToPiasters(halfWholesalePriceText) ?: 0L }
     val parsedWholesalePreview = remember(wholesalePriceText) { MoneyFormatter.parseEgpToPiasters(wholesalePriceText) ?: 0L }
     val parsedBuyPreview = remember(purchasePriceText) { MoneyFormatter.parseEgpToPiasters(purchasePriceText) ?: 0L }
     val previewExamples = remember(unitLabel, parsedSalePreview, currency) {
@@ -982,54 +966,26 @@ fun ProductFormDialog(
                                 )
                             }
 
-                            // 2x2 Price Tiers: Purchase + Retail (قطاعي) + Half-Wholesale (1/2 الجملة) + Wholesale (الجملة)
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                OutlinedTextField(
-                                    value = purchasePriceText,
-                                    onValueChange = { purchasePriceText = it; err = null },
-                                    label = { Text("سعر الشراء ($cleanUnit)") },
-                                    suffix = { Text(currency, style = MaterialTheme.typography.labelSmall) },
-                                    singleLine = true,
-                                    shape = RoundedCornerShape(14.dp),
-                                    colors = fieldColors,
-                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .testTag("product_form_purchase_price")
-                                )
-                                OutlinedTextField(
-                                    value = salePriceText,
-                                    onValueChange = { salePriceText = it; err = null },
-                                    label = { Text("البيع قطاعي ($cleanUnit) *") },
-                                    suffix = { Text(currency, style = MaterialTheme.typography.labelSmall) },
-                                    singleLine = true,
-                                    shape = RoundedCornerShape(14.dp),
-                                    colors = fieldColors,
-                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .testTag("product_form_sale_price")
-                                )
-                            }
+                            // 3 Price Tiers: Purchase + Wholesale (بيع جملة) + Retail (بيع قطاعي)
+                            OutlinedTextField(
+                                value = purchasePriceText,
+                                onValueChange = { purchasePriceText = it; err = null },
+                                label = { Text("سعر الشراء ($cleanUnit)") },
+                                suffix = { Text(currency, style = MaterialTheme.typography.labelSmall) },
+                                singleLine = true,
+                                shape = RoundedCornerShape(14.dp),
+                                colors = fieldColors,
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("product_form_purchase_price")
+                            )
 
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 OutlinedTextField(
-                                    value = halfWholesalePriceText,
-                                    onValueChange = { halfWholesalePriceText = it; err = null },
-                                    label = { Text("1/2 الجملة ($cleanUnit)") },
-                                    suffix = { Text(currency, style = MaterialTheme.typography.labelSmall) },
-                                    singleLine = true,
-                                    shape = RoundedCornerShape(14.dp),
-                                    colors = fieldColors,
-                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .testTag("product_form_half_wholesale_price")
-                                )
-                                OutlinedTextField(
                                     value = wholesalePriceText,
                                     onValueChange = { wholesalePriceText = it; err = null },
-                                    label = { Text("سعر الجملة ($cleanUnit)") },
+                                    label = { Text("سعر بيع جملة ($cleanUnit)") },
                                     suffix = { Text(currency, style = MaterialTheme.typography.labelSmall) },
                                     singleLine = true,
                                     shape = RoundedCornerShape(14.dp),
@@ -1038,6 +994,19 @@ fun ProductFormDialog(
                                     modifier = Modifier
                                         .weight(1f)
                                         .testTag("product_form_wholesale_price")
+                                )
+                                OutlinedTextField(
+                                    value = salePriceText,
+                                    onValueChange = { salePriceText = it; err = null },
+                                    label = { Text("سعر بيع قطاعي ($cleanUnit) *") },
+                                    suffix = { Text(currency, style = MaterialTheme.typography.labelSmall) },
+                                    singleLine = true,
+                                    shape = RoundedCornerShape(14.dp),
+                                    colors = fieldColors,
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .testTag("product_form_sale_price")
                                 )
                             }
 
@@ -1100,14 +1069,11 @@ fun ProductFormDialog(
                                         }
                                         if (parsedBuyPreview > 0L) {
                                             val retailProfit = parsedSalePreview - parsedBuyPreview
-                                            val halfProfitText = if (parsedHalfWholesalePreview > 0L) {
-                                                " • 1/2 جملة: ${MoneyFormatter.formatEgp(parsedHalfWholesalePreview - parsedBuyPreview, currency)}"
-                                            } else ""
                                             val wholeProfitText = if (parsedWholesalePreview > 0L) {
-                                                " • جملة: ${MoneyFormatter.formatEgp(parsedWholesalePreview - parsedBuyPreview, currency)}"
+                                                " • بيع جملة: ${MoneyFormatter.formatEgp(parsedWholesalePreview - parsedBuyPreview, currency)}"
                                             } else ""
                                             Text(
-                                                text = "ربح القطاعي: ${MoneyFormatter.formatEgp(retailProfit, currency)}$halfProfitText$wholeProfitText",
+                                                text = "ربح بيع قطاعي: ${MoneyFormatter.formatEgp(retailProfit, currency)}$wholeProfitText",
                                                 style = MaterialTheme.typography.labelSmall,
                                                 fontWeight = FontWeight.Bold,
                                                 color = if (retailProfit >= 0L) extras.success else extras.danger
@@ -1273,14 +1239,9 @@ fun ProductFormDialog(
                                 err = "أدخل سعر البيع قطاعي صحيحًا"
                                 return@Button
                             }
-                            val halfWholesaleP = if (halfWholesalePriceText.isBlank()) 0L else (MoneyFormatter.parseEgpToPiasters(halfWholesalePriceText) ?: -1L)
-                            if (halfWholesaleP < 0L) {
-                                err = "أدخل سعر 1/2 الجملة صحيحًا"
-                                return@Button
-                            }
                             val wholesaleP = if (wholesalePriceText.isBlank()) 0L else (MoneyFormatter.parseEgpToPiasters(wholesalePriceText) ?: -1L)
                             if (wholesaleP < 0L) {
-                                err = "أدخل سعر الجملة صحيحًا"
+                                err = "أدخل سعر بيع جملة صحيحًا"
                                 return@Button
                             }
                             val buyP = if (purchasePriceText.isBlank()) 0L else (MoneyFormatter.parseEgpToPiasters(purchasePriceText) ?: -1L)
@@ -1298,7 +1259,8 @@ fun ProductFormDialog(
                                 err = "أدخل حد تنبيه صحيحًا"
                                 return@Button
                             }
-                            onSave(name, category, sku, cleanUnit, saleP, halfWholesaleP, wholesaleP, buyP, stockM, trackStock, minM, notes) { err = it }
+                            val preservedHalf = initial?.halfWholesalePricePiasters ?: 0L
+                            onSave(name, category, sku, cleanUnit, saleP, preservedHalf, wholesaleP, buyP, stockM, trackStock, minM, notes) { err = it }
                         },
                         shape = RoundedCornerShape(14.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = PrimaryBlue),
@@ -1465,6 +1427,7 @@ fun ProductPickerDialog(
     onSelect: (ProductEntity) -> Unit = {},
     onQuickAddNew: () -> Unit,
     showPriceTierSelector: Boolean = false,
+    isPurchaseMode: Boolean = false,
     onSelectWithPrice: ((ProductEntity, Long) -> Unit)? = null
 ) {
     var query by remember { mutableStateOf("") }
@@ -1528,7 +1491,7 @@ fun ProductPickerDialog(
                                 color = Color.White
                             )
                             Text(
-                                text = "يتم تعبئة السعر ووحدة الحساب تلقائيًا",
+                                text = if (isPurchaseMode) "يتم تعبئة سعر الشراء وأسعار البيع جملة وقطاعي تلقائيًا" else "يتم تعبئة السعر ووحدة الحساب تلقائيًا",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = Color.White.copy(alpha = 0.85f)
                             )
@@ -1571,16 +1534,16 @@ fun ProductPickerDialog(
                     if (showPriceTierSelector) {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            SalePriceTier.entries.forEach { tier ->
+                            listOf(SalePriceTier.RETAIL, SalePriceTier.WHOLESALE).forEach { tier ->
                                 FilterChip(
                                     selected = selectedTier == tier,
                                     onClick = { selectedTier = tier },
                                     label = {
                                         Text(
-                                            text = tier.arabicLabel,
-                                            style = MaterialTheme.typography.labelSmall,
+                                            text = "بيع ${tier.arabicLabel}",
+                                            style = MaterialTheme.typography.labelMedium,
                                             fontWeight = FontWeight.Bold,
                                             maxLines = 1,
                                             overflow = TextOverflow.Ellipsis
@@ -1621,10 +1584,10 @@ fun ProductPickerDialog(
                         ) {
                             items(filtered, key = { it.id }) { prod ->
                                 val unitCat = UnitMeasurement.categoryForUnit(prod.unitLabel)
-                                val displayPrice = if (showPriceTierSelector) {
-                                    prod.priceForTier(selectedTier)
-                                } else {
-                                    prod.salePricePiasters
+                                val displayPrice = when {
+                                    isPurchaseMode -> if (prod.purchasePricePiasters > 0L) prod.purchasePricePiasters else prod.salePricePiasters
+                                    showPriceTierSelector -> prod.priceForTier(selectedTier)
+                                    else -> prod.salePricePiasters
                                 }
                                 HesabatyCard(
                                     onClick = {
@@ -1652,18 +1615,18 @@ fun ProductPickerDialog(
                                                     textColor = PrimaryBlue,
                                                     backgroundColor = PrimaryBlue.copy(alpha = 0.1f)
                                                 )
-                                                if (prod.halfWholesalePricePiasters > 0L) {
-                                                    StatusBadge(
-                                                        label = "1/2 جملة: ${MoneyFormatter.formatEgp(prod.halfWholesalePricePiasters, currency)}",
-                                                        textColor = PrimaryBlue,
-                                                        backgroundColor = PrimaryBlue.copy(alpha = 0.08f)
-                                                    )
-                                                }
                                                 if (prod.wholesalePricePiasters > 0L) {
                                                     StatusBadge(
                                                         label = "جملة: ${MoneyFormatter.formatEgp(prod.wholesalePricePiasters, currency)}",
                                                         textColor = extras.success,
                                                         backgroundColor = extras.successContainer
+                                                    )
+                                                }
+                                                if (isPurchaseMode && prod.salePricePiasters > 0L) {
+                                                    StatusBadge(
+                                                        label = "قطاعي: ${MoneyFormatter.formatEgp(prod.salePricePiasters, currency)}",
+                                                        textColor = PrimaryBlue,
+                                                        backgroundColor = PrimaryBlue.copy(alpha = 0.08f)
                                                     )
                                                 }
                                                 if (prod.trackStock) {
@@ -1684,10 +1647,10 @@ fun ProductPickerDialog(
                                                 color = PrimaryBlue
                                             )
                                             Text(
-                                                text = if (showPriceTierSelector) {
-                                                    "${selectedTier.arabicLabel} / ${prod.unitLabel}"
-                                                } else {
-                                                    "لكل ${prod.unitLabel}"
+                                                text = when {
+                                                    isPurchaseMode -> "شراء / ${prod.unitLabel}"
+                                                    showPriceTierSelector -> "${selectedTier.arabicLabel} / ${prod.unitLabel}"
+                                                    else -> "لكل ${prod.unitLabel}"
                                                 },
                                                 style = MaterialTheme.typography.labelSmall,
                                                 color = MaterialTheme.colorScheme.onSurfaceVariant
