@@ -135,16 +135,7 @@ fun SettingsScreen(
         contract = ActivityResultContracts.PickVisualMedia()
     ) { uri ->
         if (uri != null) {
-            viewModel.updateTenant(
-                tenant = tenant,
-                shopName = tenant.shopName,
-                ownerName = tenant.ownerName,
-                address = tenant.address,
-                phone = tenant.phone,
-                whatsappPhone = tenant.whatsappPhone,
-                invoiceFooter = tenant.invoiceFooter,
-                logoUri = uri.toString()
-            )
+            viewModel.updateTenantLogoFromUri(tenant = tenant, sourceUri = uri)
         }
     }
 
@@ -662,11 +653,14 @@ private fun SettingsHeroHeader(
                                     border = BorderStroke(2.dp, SettingsGold),
                                     modifier = Modifier.fillMaxSize()
                                 ) {
-                                    if (!tenant.logoUri.isNullOrBlank()) {
+                                    var logoLoadFailed by remember(tenant.logoUri) { mutableStateOf(false) }
+                                    if (!tenant.logoUri.isNullOrBlank() && !logoLoadFailed) {
                                         AsyncImage(
                                             model = tenant.logoUri,
                                             contentDescription = "شعار المحل",
                                             contentScale = ContentScale.Crop,
+                                            onError = { logoLoadFailed = true },
+                                            onSuccess = { logoLoadFailed = false },
                                             modifier = Modifier.fillMaxSize()
                                         )
                                     } else {

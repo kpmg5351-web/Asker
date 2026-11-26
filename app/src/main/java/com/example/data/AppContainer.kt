@@ -9,6 +9,7 @@ import com.example.data.repository.AccountingRepository
 import com.example.data.repository.AuthRepository
 
 class AppContainer(context: Context) {
+    val appContext: Context = context.applicationContext
     val database: HesabatyDatabase = HesabatyDatabase.getInstance(context)
     val sessionPreferences: SessionPreferences = SessionPreferences(context)
     val deviceLicenseManager: DeviceLicenseManager = DeviceLicenseManager(context)

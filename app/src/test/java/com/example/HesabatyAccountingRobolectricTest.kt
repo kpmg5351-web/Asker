@@ -1518,4 +1518,59 @@ class HesabatyAccountingRobolectricTest {
         assertEquals(1_300L, items[1].wholesalePricePiasters)
         assertEquals(1_500L, items[1].retailPricePiasters)
     }
+
+    @Test
+    fun test33_shopLogoPersistsToInternalStorageAcrossRestart() = runTest {
+        val context = androidx.test.core.app.ApplicationProvider.getApplicationContext<android.content.Context>()
+        val sourceFile = java.io.File(context.cacheDir, "temp_picker_photo.jpg")
+        val sampleBytes = byteArrayOf(0xFF.toByte(), 0xD8.toByte(), 0xFF.toByte(), 0xE0.toByte(), 1, 2, 3, 4)
+        sourceFile.writeBytes(sampleBytes)
+
+        val persisted = com.example.core.ShopLogoStorage.persistLogo(
+            context = context,
+            tenantId = tenantAId,
+            sourceUri = android.net.Uri.fromFile(sourceFile)
+        ).getOrThrow()
+
+        // Simulate Photo Picker temporary URI becoming invalid after app restart
+        sourceFile.delete()
+        assertTrue(persisted.startsWith("file://"))
+        assertTrue(com.example.core.ShopLogoStorage.isReadableLogoUri(context, persisted))
+
+        val tenant = db.tenantDao().getTenantById(tenantAId)!!
+        val updRes = authRepo.updateTenantInfo(
+            actor = ownerA,
+            tenant = tenant,
+            shopName = tenant.shopName,
+            ownerName = tenant.ownerName,
+            address = tenant.address,
+            phone = tenant.phone,
+            whatsappPhone = tenant.whatsappPhone,
+            invoiceFooter = tenant.invoiceFooter,
+            logoUri = persisted
+        )
+        assertTrue(updRes is com.example.data.repository.AuthResult.Success)
+
+        // Reload tenant fresh from DB (simulating cold app restart)
+        val reloadedTenant = db.tenantDao().getTenantById(tenantAId)!!
+        assertEquals(persisted, reloadedTenant.logoUri)
+        assertTrue(com.example.core.ShopLogoStorage.isReadableLogoUri(context, reloadedTenant.logoUri))
+
+        // Saving a second logo replaces old logo cleanly without leaving stale files
+        val secondSource = java.io.File(context.cacheDir, "temp_picker_photo_2.png")
+        secondSource.writeBytes(byteArrayOf(0x89.toByte(), 0x50, 0x4E, 0x47, 5, 6, 7))
+        Thread.sleep(5)
+        val persisted2 = com.example.core.ShopLogoStorage.persistLogo(
+            context = context,
+            tenantId = tenantAId,
+            sourceUri = android.net.Uri.fromFile(secondSource)
+        ).getOrThrow()
+        assertTrue(persisted2 != persisted)
+        assertTrue(com.example.core.ShopLogoStorage.isReadableLogoUri(context, persisted2))
+        val logoDir = java.io.File(context.filesDir, "shop_logos")
+        val tenantFiles = logoDir.listFiles()?.filter { it.name.startsWith("logo_${tenantAId}_") } ?: emptyList()
+        assertEquals(1, tenantFiles.size)
+        com.example.core.ShopLogoStorage.deleteTenantLogos(context, tenantAId)
+        secondSource.delete()
+    }
 }

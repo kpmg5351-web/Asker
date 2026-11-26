@@ -6,6 +6,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.example.core.EgyptTime
 import com.example.core.SecurityUtils
+import com.example.core.ShopLogoStorage
 import com.example.data.AppContainer
 import com.example.data.backup.BackupOpResult
 import com.example.data.backup.DriveFileItem
@@ -802,6 +803,40 @@ class HesabatyViewModel(private val container: AppContainer) : ViewModel() {
                     emitMessage("تم حفظ بيانات المحل بنجاح")
                     onDone(true, "تم حفظ بيانات المحل")
                 }
+            }
+        }
+    }
+
+    fun updateTenantLogoFromUri(
+        tenant: TenantEntity,
+        sourceUri: Uri
+    ) {
+        val actor = currentUser() ?: return
+        val latestTenant = activeTenant.value ?: tenant
+        viewModelScope.launch {
+            val persistRes = withContext(Dispatchers.IO) {
+                ShopLogoStorage.persistLogo(container.appContext, latestTenant.id, sourceUri)
+            }
+            val persistedUri = persistRes.getOrElse { err ->
+                emitMessage(err.message ?: "تعذر حفظ صورة الشعار، جرّب صورة أخرى", true)
+                return@launch
+            }
+            when (
+                val res = authRepo.updateTenantInfo(
+                    actor = actor,
+                    tenant = latestTenant,
+                    shopName = latestTenant.shopName,
+                    ownerName = latestTenant.ownerName,
+                    address = latestTenant.address,
+                    phone = latestTenant.phone,
+                    whatsappPhone = latestTenant.whatsappPhone,
+                    invoiceFooter = latestTenant.invoiceFooter,
+                    logoUri = persistedUri
+                )
+            ) {
+                is AuthResult.Error -> emitMessage(res.message, true)
+                is AuthResult.TrialExpired -> emitMessage("انتهت الفترة التجريبية", true)
+                is AuthResult.Success -> emitMessage("تم حفظ شعار المحل بنجاح")
             }
         }
     }
